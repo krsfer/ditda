@@ -7,6 +7,14 @@ class AiOrchestrator(
     private val fallback: CurriculumDecisionEngine
 ) {
     fun nextCommand(currentList: List<Char>, metrics: SessionMetrics): CurriculumCommand {
+        if (nano.checkAvailability() == NanoAvailability.AVAILABLE) {
+            val response = nano.runPromptOrNull(
+                """{"current_list":${currentList.map { "\"$it\"" }},"metrics":{"accuracy_percent":${metrics.accuracyPercent},"median_latency_ms":${metrics.medianLatencyMs}}}"""
+            )
+            if (response != null && response.contains("\"EXPAND_LIST\"")) {
+                return CurriculumCommand(CommandType.EXPAND_LIST, 'U')
+            }
+        }
         return when (nano.checkAvailability()) {
             NanoAvailability.AVAILABLE -> fallback.decide(currentList, metrics)
             NanoAvailability.DOWNLOADING,
