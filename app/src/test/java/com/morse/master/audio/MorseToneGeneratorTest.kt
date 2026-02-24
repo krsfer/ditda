@@ -1,0 +1,15 @@
+package com.morse.master.audio
+
+import com.google.common.truth.Truth.assertThat
+import kotlin.math.abs
+import org.junit.Test
+
+class MorseToneGeneratorTest {
+    @Test
+    fun `applies start and end smoothing`() {
+        val pcm = MorseToneGenerator().generatePulse(durationMs = 120, sampleRate = 44100)
+        assertThat(abs(pcm.first().toInt())).isLessThan(200)
+        assertThat(abs(pcm.last().toInt())).isLessThan(200)
+        assertThat(pcm.size).isEqualTo((44100 * 0.120).toInt())
+    }
+}
