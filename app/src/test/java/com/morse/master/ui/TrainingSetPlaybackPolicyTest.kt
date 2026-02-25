@@ -1,6 +1,7 @@
 package com.morse.master.ui
 
 import com.google.common.truth.Truth.assertThat
+import com.morse.master.domain.KochSequence
 import com.morse.master.domain.MorseTiming
 import org.junit.Test
 
@@ -26,5 +27,10 @@ class TrainingSetPlaybackPolicyTest {
 
         assertThat(sliderValueToTrainingSetRepeatCount(0)).isEqualTo(0)
         assertThat(sliderValueToTrainingSetRepeatCount(11)).isEqualTo(TRAINING_SET_REPEAT_ENDLESS)
+    }
+
+    @Test
+    fun `uses koch sequence size for maximum training levels`() {
+        assertThat(maxTrainingLevels()).isEqualTo(KochSequence.full().size)
     }
 }

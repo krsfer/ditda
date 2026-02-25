@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.morse.master.audio.MorsePracticePlayer
+import com.morse.master.domain.KochSequence
 import com.morse.master.domain.MorseTiming
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -40,6 +41,8 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 private const val REPEAT_SLIDER_ENDLESS_VALUE = 11
+
+internal fun maxTrainingLevels(): Int = KochSequence.full().size
 
 internal fun totalTrainingSetIterations(repeatCount: Int): Int? = when (repeatCount) {
     TRAINING_SET_REPEAT_ENDLESS -> null
@@ -151,9 +154,11 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                     AppTab.PRACTICE -> SessionScreen(
                         characters = state.currentCharacters,
                         modifier = Modifier.fillMaxSize(),
+                        maxTrainingLevels = maxTrainingLevels(),
                         settings = state.settings,
                         nextCharacter = state.nextCharacter,
                         isPlaying = state.isPlaying,
+                        currentIteration = state.currentIteration,
                         highlightedCharacter = state.highlightedCharacter,
                         onCharacterPressed = { char ->
                             scope.launch {
@@ -171,6 +176,7 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                             } else {
                                 val settingsSnapshot = state.settings
                                 viewModel.clearPlaybackStopRequest()
+                                viewModel.resetCurrentIteration()
                                 viewModel.setPlaying(true)
                                 scope.launch {
                                     try {
@@ -184,6 +190,9 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                                         var repetition = 0
                                         playback@ while (totalIterations == null || repetition < totalIterations) {
                                             if (viewModel.isPlaybackStopRequested()) break@playback
+
+                                            repetition += 1
+                                            viewModel.setCurrentIteration(repetition)
 
                                             val playSequence = viewModel.nextRandomizedTrainingSet()
                                             for ((index, char) in playSequence.withIndex()) {
@@ -202,7 +211,6 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                                                 }
                                             }
 
-                                            repetition += 1
                                             if ((totalIterations == null || repetition < totalIterations) &&
                                                 !viewModel.isPlaybackStopRequested()
                                             ) {
@@ -211,6 +219,7 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                                         }
                                     } finally {
                                         viewModel.clearPlaybackStopRequest()
+                                        viewModel.resetCurrentIteration()
                                         viewModel.setHighlightedCharacter(null)
                                         viewModel.setPlaying(false)
                                     }

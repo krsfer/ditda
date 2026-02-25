@@ -29,6 +29,7 @@ data class DitDaUiState(
     val currentCharacters: List<Char> = listOf('K', 'M'),
     val nextCharacter: Char? = 'U',
     val isPlaying: Boolean = false,
+    val currentIteration: Int = 0,
     val highlightedCharacter: Char? = null,
     val stopPlaybackRequested: Boolean = false
 )
@@ -89,6 +90,14 @@ class DitDaViewModel(
 
     fun setPlaying(value: Boolean) {
         updateState { it.copy(isPlaying = value) }
+    }
+
+    fun setCurrentIteration(iteration: Int) {
+        updateState { it.copy(currentIteration = iteration.coerceAtLeast(0)) }
+    }
+
+    fun resetCurrentIteration() {
+        setCurrentIteration(0)
     }
 
     fun setHighlightedCharacter(character: Char?) {

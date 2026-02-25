@@ -153,6 +153,19 @@ class DitDaViewModelTest {
     }
 
     @Test
+    fun `tracks current playback iteration`() = runTest {
+        val vm = DitDaViewModel()
+
+        vm.state.test {
+            assertThat(awaitItem().currentIteration).isEqualTo(0)
+            vm.setCurrentIteration(2)
+            assertThat(awaitItem().currentIteration).isEqualTo(2)
+            vm.resetCurrentIteration()
+            assertThat(awaitItem().currentIteration).isEqualTo(0)
+        }
+    }
+
+    @Test
     fun `stop playback request can be raised and cleared`() {
         val vm = DitDaViewModel()
 
