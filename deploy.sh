@@ -6,7 +6,7 @@ LAUNCH_COMPONENT="${APP_ID}/.MainActivity"
 APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
 
 usage() {
-  cat <<'EOF'
+  cat <<'EOF_USAGE'
 Usage: ./deploy.sh [--serial <device-serial>] [--skip-build]
 
 Builds the debug APK, installs it on a connected device, and launches the app.
@@ -15,7 +15,7 @@ Options:
   --serial <device-serial>  Target a specific connected device/emulator
   --skip-build              Skip Gradle build step and use existing APK
   -h, --help                Show this help
-EOF
+EOF_USAGE
 }
 
 ANDROID_HOME_DIR="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
@@ -59,7 +59,17 @@ while (($# > 0)); do
 done
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
-  ./gradlew assembleDebug
+  # Ensure gradle uses bundled JDK; unset JAVA_HOME to avoid mismatches.
+  unset JAVA_HOME
+
+  # Use a stable user-wide gradle cache by default so wrapper/distributions
+  # are reused across Android projects.
+  : "${GRADLE_USER_HOME:=$HOME/.gradle}"
+  export GRADLE_USER_HOME
+  mkdir -p "$GRADLE_USER_HOME"
+  echo "Using GRADLE_USER_HOME=$GRADLE_USER_HOME"
+
+  ./gradlew --gradle-user-home "$GRADLE_USER_HOME" assembleDebug
 fi
 
 if [[ ! -f "$APK_PATH" ]]; then

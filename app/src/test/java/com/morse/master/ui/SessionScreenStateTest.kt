@@ -1,11 +1,12 @@
 package com.morse.master.ui
 
 import com.google.common.truth.Truth.assertThat
+import com.morse.master.coach.CoachState
 import org.junit.Test
 
 class SessionScreenStateTest {
     @Test
-    fun `keeps character buttons enabled while playing and highlights only active character`() {
+    fun `disables character buttons while manual playback is active and keeps highlight state`() {
         val playingHighlighted = characterButtonVisualState(
             isPlaying = true,
             character = 'K',
@@ -17,8 +18,8 @@ class SessionScreenStateTest {
             highlightedCharacter = 'K'
         )
 
-        assertThat(playingHighlighted.enabled).isTrue()
-        assertThat(playingNotHighlighted.enabled).isTrue()
+        assertThat(playingHighlighted.enabled).isFalse()
+        assertThat(playingNotHighlighted.enabled).isFalse()
         assertThat(playingHighlighted.isHighlighted).isTrue()
         assertThat(playingNotHighlighted.isHighlighted).isFalse()
     }
@@ -97,5 +98,42 @@ class SessionScreenStateTest {
                 maxTrainingLevels = 25
             )
         ).isEqualTo("Training Level: 3 / 25 (12%)")
+    }
+
+    @Test
+    fun `disables manual tone controls while coach session is active`() {
+        assertThat(isCoachSessionInProgress(CoachState.ROUND_ACTIVE)).isTrue()
+        assertThat(
+            isManualCharacterInputEnabled(
+                isPlaying = false,
+                coachState = CoachState.ROUND_ACTIVE
+            )
+        ).isFalse()
+        assertThat(
+            isPlayTrainingSetEnabled(
+                isPlaying = false,
+                coachState = CoachState.ROUND_ACTIVE
+            )
+        ).isFalse()
+    }
+
+    @Test
+    fun `keeps play training set enabled only to stop active manual playback`() {
+        assertThat(
+            isPlayTrainingSetEnabled(
+                isPlaying = true,
+                coachState = CoachState.ROUND_ACTIVE
+            )
+        ).isTrue()
+    }
+
+    @Test
+    fun `disables coach start while manual playback is running`() {
+        assertThat(
+            isCoachStartEnabled(
+                coachState = CoachState.IDLE,
+                isPlaying = true
+            )
+        ).isFalse()
     }
 }

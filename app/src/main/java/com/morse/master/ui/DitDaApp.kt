@@ -2,6 +2,8 @@
 
 package com.morse.master.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -21,22 +23,39 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.morse.master.audio.MorsePracticePlayer
+import com.morse.master.ai.CoachDecisionEngine
+import com.morse.master.coach.AndroidSpeechRecognizerGateway
+import com.morse.master.coach.AndroidTextToSpeechCoachNarrationGateway
+import com.morse.master.coach.CoachState
+import com.morse.master.coach.CoachVoiceCommand
+import com.morse.master.coach.CommandParser
+import com.morse.master.coach.PhoneticVocabulary
+import com.morse.master.coach.PrefixWakePhraseGateway
+import com.morse.master.coach.VoiceCoachCoordinator
+import com.morse.master.coach.VoiceCoachSettings
 import com.morse.master.domain.KochSequence
 import com.morse.master.domain.MorseTiming
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -77,12 +96,51 @@ internal fun pageToTab(page: Int): AppTab = when (page) {
     else -> AppTab.PRACTICE
 }
 
+internal fun shouldRunVoiceCommandListener(
+    activeTab: AppTab,
+    handsFreeEnabled: Boolean,
+    micPermissionGranted: Boolean,
+    coachState: CoachState,
+    voiceControlArmed: Boolean
+): Boolean {
+    return activeTab == AppTab.PRACTICE &&
+        handsFreeEnabled &&
+        micPermissionGranted &&
+        voiceControlArmed &&
+        coachState != CoachState.ROUND_ACTIVE
+}
+
+internal fun shouldRunVoiceRoundLoop(
+    activeTab: AppTab,
+    handsFreeEnabled: Boolean,
+    micPermissionGranted: Boolean,
+    coachState: CoachState
+): Boolean {
+    return activeTab == AppTab.PRACTICE &&
+        handsFreeEnabled &&
+        micPermissionGranted &&
+        coachState == CoachState.ROUND_ACTIVE
+}
+
 @Composable
 fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val player = remember(context) { MorsePracticePlayer(context) }
+    var micPermissionGranted by remember(context) {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        micPermissionGranted = granted
+    }
     val pagerState = rememberPagerState(
         initialPage = tabToPage(state.activeTab),
         pageCount = { AppTab.entries.size }
@@ -107,6 +165,106 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
             .collect { page ->
                 viewModel.selectTab(pageToTab(page))
             }
+    }
+
+    LaunchedEffect(state.settings.handsFreeEnabled, micPermissionGranted) {
+        if (state.settings.handsFreeEnabled && !micPermissionGranted) {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    LaunchedEffect(state.activeTab, state.settings.handsFreeEnabled, micPermissionGranted, state.coachState) {
+        if (!shouldRunVoiceCommandListener(
+                activeTab = state.activeTab,
+                handsFreeEnabled = state.settings.handsFreeEnabled,
+                micPermissionGranted = micPermissionGranted,
+                coachState = state.coachState,
+                voiceControlArmed = state.voiceControlArmed
+            )
+        ) return@LaunchedEffect
+
+        while (isActive) {
+            val current = viewModel.state.value
+            if (!shouldRunVoiceCommandListener(
+                    activeTab = current.activeTab,
+                    handsFreeEnabled = current.settings.handsFreeEnabled,
+                    micPermissionGranted = micPermissionGranted,
+                    coachState = current.coachState,
+                    voiceControlArmed = current.voiceControlArmed
+                )
+            ) {
+                break
+            }
+            val command = viewModel.pollCoachVoiceCommand(timeoutMs = 4_000L)
+            if (command == null) {
+                delay(350L)
+            }
+        }
+    }
+
+    LaunchedEffect(state.activeTab, state.settings.handsFreeEnabled, micPermissionGranted, state.coachState) {
+        if (!shouldRunVoiceRoundLoop(
+                activeTab = state.activeTab,
+                handsFreeEnabled = state.settings.handsFreeEnabled,
+                micPermissionGranted = micPermissionGranted,
+                coachState = state.coachState
+            )
+        ) return@LaunchedEffect
+
+        while (isActive) {
+            val current = viewModel.state.value
+            if (!shouldRunVoiceRoundLoop(
+                    activeTab = current.activeTab,
+                    handsFreeEnabled = current.settings.handsFreeEnabled,
+                    micPermissionGranted = micPermissionGranted,
+                    coachState = current.coachState
+                )
+            ) {
+                break
+            }
+
+            val timing = MorseTiming(
+                characterWpm = current.settings.characterWpm,
+                effectiveWpm = current.settings.effectiveWpm
+            )
+            val playSequence = viewModel.nextRandomizedTrainingSet()
+            val attempts = mutableListOf<com.morse.master.coach.VoiceAttempt>()
+
+            for ((index, char) in playSequence.withIndex()) {
+                var loopState = viewModel.state.value
+                if (loopState.coachState != CoachState.ROUND_ACTIVE) break
+
+                viewModel.awaitCoachNarrationIdle()
+                loopState = viewModel.state.value
+                if (loopState.coachState != CoachState.ROUND_ACTIVE) break
+
+                if (loopState.coachState != CoachState.ROUND_ACTIVE) break
+
+                attempts += viewModel.captureCoachAttempt(char) { assistLevel ->
+                    if (loopState.settings.soundEnabled) {
+                        val playSettings = if (assistLevel == 2) {
+                            loopState.settings.copy(
+                                effectiveWpm = (loopState.settings.effectiveWpm - 2).coerceAtLeast(5)
+                            )
+                        } else {
+                            loopState.settings
+                        }
+                        player.playCharacter(char, playSettings)
+                    }
+                }
+
+                if (loopState.coachState != CoachState.ROUND_ACTIVE) break
+                if (index < playSequence.lastIndex) {
+                    delay(timing.interCharGapMs.toLong())
+                }
+            }
+
+            if (attempts.isNotEmpty()) {
+                viewModel.onCoachRoundCompleted(attempts)
+            } else {
+                break
+            }
+        }
     }
 
     MaterialTheme(colorScheme = colorScheme) {
@@ -160,6 +318,11 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                         isPlaying = state.isPlaying,
                         currentIteration = state.currentIteration,
                         highlightedCharacter = state.highlightedCharacter,
+                        coachState = state.coachState,
+                        sessionElapsedMs = state.sessionElapsedMs,
+                        lastCoachMessage = state.lastCoachMessage,
+                        voiceControlArmed = state.voiceControlArmed,
+                        micPermissionGranted = micPermissionGranted,
                         onCharacterPressed = { char ->
                             scope.launch {
                                 viewModel.setPlaying(true)
@@ -231,6 +394,26 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                         },
                         onRemovePressed = {
                             viewModel.removeLatestCharacter()
+                        },
+                        onCoachStart = {
+                            scope.launch {
+                                if (viewModel.state.value.isPlaying) {
+                                    viewModel.requestPlaybackStop()
+                                    while (isActive && viewModel.state.value.isPlaying) {
+                                        delay(20L)
+                                    }
+                                }
+                                viewModel.handleCoachCommand(CoachVoiceCommand.START_SESSION)
+                            }
+                        },
+                        onCoachPause = {
+                            viewModel.handleCoachCommand(CoachVoiceCommand.PAUSE)
+                        },
+                        onCoachResume = {
+                            viewModel.handleCoachCommand(CoachVoiceCommand.RESUME)
+                        },
+                        onCoachStop = {
+                            viewModel.handleCoachCommand(CoachVoiceCommand.STOP)
                         }
                     )
 
@@ -244,7 +427,10 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                         onVibrationEnabledChange = viewModel::updateVibrationEnabled,
                         onHighlightPlaybackEnabledChange = viewModel::updateHighlightPlaybackEnabled,
                         onTrainingSetRepeatCountChange = viewModel::updateTrainingSetRepeatCount,
-                        onDarkModeChange = viewModel::updateDarkMode
+                        onDarkModeChange = viewModel::updateDarkMode,
+                        onHandsFreeEnabledChange = viewModel::updateHandsFreeEnabled,
+                        onWakePhraseRequiredChange = viewModel::updateWakePhraseRequired,
+                        onFeedbackVerboseChange = viewModel::updateFeedbackVerbose
                     )
                 }
             }
@@ -255,8 +441,31 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
 @Composable
 private fun rememberDitDaViewModel(): DitDaViewModel {
     val context = LocalContext.current.applicationContext
-    return remember(context) {
-        DitDaViewModel(stateStore = SharedPrefsDitDaStateStore(context))
+    val speechGateway = remember(context) {
+        AndroidSpeechRecognizerGateway(context)
+    }
+    val narrationGateway = remember(context) {
+        AndroidTextToSpeechCoachNarrationGateway(context)
+    }
+    DisposableEffect(narrationGateway, speechGateway) {
+        onDispose {
+            narrationGateway.shutdown()
+            speechGateway.shutdown()
+        }
+    }
+    return remember(context, narrationGateway, speechGateway) {
+        DitDaViewModel(
+            stateStore = SharedPrefsDitDaStateStore(context),
+            coachCoordinator = VoiceCoachCoordinator(
+                commandParser = CommandParser(),
+                vocabulary = PhoneticVocabulary(),
+                speechRecognizer = speechGateway,
+                narration = narrationGateway,
+                wakePhraseGateway = PrefixWakePhraseGateway(),
+                settings = VoiceCoachSettings(),
+                orchestrator = CoachDecisionEngine()
+            )
+        )
     }
 }
 
@@ -271,7 +480,10 @@ private fun SettingsScreen(
     onVibrationEnabledChange: (Boolean) -> Unit,
     onHighlightPlaybackEnabledChange: (Boolean) -> Unit,
     onTrainingSetRepeatCountChange: (Int) -> Unit,
-    onDarkModeChange: (Boolean) -> Unit
+    onDarkModeChange: (Boolean) -> Unit,
+    onHandsFreeEnabledChange: (Boolean) -> Unit,
+    onWakePhraseRequiredChange: (Boolean) -> Unit,
+    onFeedbackVerboseChange: (Boolean) -> Unit
 ) {
     Column(
         modifier = modifier
@@ -346,6 +558,42 @@ private fun SettingsScreen(
             Switch(
                 checked = settings.highlightPlaybackEnabled,
                 onCheckedChange = onHighlightPlaybackEnabledChange
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Hands-Free Voice Coach")
+            Switch(
+                checked = settings.handsFreeEnabled,
+                onCheckedChange = onHandsFreeEnabledChange
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Wake Phrase Required")
+            Switch(
+                checked = settings.wakePhraseRequired,
+                onCheckedChange = onWakePhraseRequiredChange
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Verbose Voice Feedback")
+            Switch(
+                checked = settings.feedbackVerbose,
+                onCheckedChange = onFeedbackVerboseChange
             )
         }
 

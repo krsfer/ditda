@@ -43,7 +43,19 @@ class SharedPrefsDitDaStateStore(
                 KEY_TRAINING_SET_REPEAT_COUNT,
                 DEFAULT_SETTINGS.trainingSetRepeatCount
             ),
-            darkMode = prefs.getBoolean(KEY_DARK_MODE, DEFAULT_SETTINGS.darkMode)
+            darkMode = prefs.getBoolean(KEY_DARK_MODE, DEFAULT_SETTINGS.darkMode),
+            handsFreeEnabled = prefs.getBoolean(
+                KEY_HANDS_FREE_ENABLED,
+                DEFAULT_SETTINGS.handsFreeEnabled
+            ),
+            wakePhraseRequired = prefs.getBoolean(
+                KEY_WAKE_PHRASE_REQUIRED,
+                DEFAULT_SETTINGS.wakePhraseRequired
+            ),
+            feedbackVerbose = prefs.getBoolean(
+                KEY_FEEDBACK_VERBOSE,
+                DEFAULT_SETTINGS.feedbackVerbose
+            )
         )
         return DitDaPersistedState(
             settings = settings,
@@ -63,6 +75,9 @@ class SharedPrefsDitDaStateStore(
             .putBoolean(KEY_HIGHLIGHT_PLAYBACK_ENABLED, state.settings.highlightPlaybackEnabled)
             .putInt(KEY_TRAINING_SET_REPEAT_COUNT, state.settings.trainingSetRepeatCount)
             .putBoolean(KEY_DARK_MODE, state.settings.darkMode)
+            .putBoolean(KEY_HANDS_FREE_ENABLED, state.settings.handsFreeEnabled)
+            .putBoolean(KEY_WAKE_PHRASE_REQUIRED, state.settings.wakePhraseRequired)
+            .putBoolean(KEY_FEEDBACK_VERBOSE, state.settings.feedbackVerbose)
             .putString(KEY_CURRENT_CHARACTERS, state.currentCharacters.joinToString(separator = ","))
             .apply()
     }
@@ -89,6 +104,9 @@ class SharedPrefsDitDaStateStore(
         private const val KEY_HIGHLIGHT_PLAYBACK_ENABLED = "highlight_playback_enabled"
         private const val KEY_TRAINING_SET_REPEAT_COUNT = "training_set_repeat_count"
         private const val KEY_DARK_MODE = "dark_mode"
+        private const val KEY_HANDS_FREE_ENABLED = "hands_free_enabled"
+        private const val KEY_WAKE_PHRASE_REQUIRED = "wake_phrase_required"
+        private const val KEY_FEEDBACK_VERBOSE = "feedback_verbose"
         private const val KEY_CURRENT_CHARACTERS = "current_characters"
 
         private val DEFAULT_SETTINGS = DitDaSettings()

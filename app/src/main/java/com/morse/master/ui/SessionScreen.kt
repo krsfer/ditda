@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.morse.master.coach.CoachState
 import kotlin.math.roundToInt
 
 internal data class CharacterButtonVisualState(
@@ -35,14 +36,30 @@ internal data class TrainingSetProgressBarState(
 
 private const val BASE_CURRICULUM_SIZE = 2
 
-@Suppress("UNUSED_PARAMETER")
+internal fun isCoachSessionInProgress(coachState: CoachState): Boolean {
+    return coachState != CoachState.IDLE && coachState != CoachState.STOPPED
+}
+
+internal fun isManualCharacterInputEnabled(isPlaying: Boolean, coachState: CoachState): Boolean {
+    return !isPlaying && !isCoachSessionInProgress(coachState)
+}
+
+internal fun isPlayTrainingSetEnabled(isPlaying: Boolean, coachState: CoachState): Boolean {
+    return isPlaying || !isCoachSessionInProgress(coachState)
+}
+
+internal fun isCoachStartEnabled(coachState: CoachState, isPlaying: Boolean): Boolean {
+    return !isPlaying && (coachState == CoachState.IDLE || coachState == CoachState.STOPPED)
+}
+
 internal fun characterButtonVisualState(
     isPlaying: Boolean,
     character: Char,
-    highlightedCharacter: Char?
+    highlightedCharacter: Char?,
+    coachState: CoachState = CoachState.IDLE
 ): CharacterButtonVisualState {
     return CharacterButtonVisualState(
-        enabled = true,
+        enabled = isManualCharacterInputEnabled(isPlaying, coachState),
         isHighlighted = character == highlightedCharacter
     )
 }
@@ -134,10 +151,19 @@ fun SessionScreen(
     isPlaying: Boolean = false,
     currentIteration: Int = 0,
     highlightedCharacter: Char? = null,
+    coachState: CoachState = CoachState.IDLE,
+    sessionElapsedMs: Long = 0L,
+    lastCoachMessage: String? = null,
+    voiceControlArmed: Boolean = false,
+    micPermissionGranted: Boolean = true,
     onCharacterPressed: (Char) -> Unit = {},
     onPlaySetPressed: () -> Unit = {},
     onAdvancePressed: () -> Unit = {},
-    onRemovePressed: () -> Unit = {}
+    onRemovePressed: () -> Unit = {},
+    onCoachStart: () -> Unit = {},
+    onCoachPause: () -> Unit = {},
+    onCoachResume: () -> Unit = {},
+    onCoachStop: () -> Unit = {}
 ) {
     val removableCharacter = latestRemovableCharacter(characters)
     val progressBarState = trainingLevelProgressBarState(
@@ -183,6 +209,17 @@ fun SessionScreen(
                     repeatCount = settings.trainingSetRepeatCount
                 )
             )
+            if (settings.handsFreeEnabled) {
+                val status = coachState.name.lowercase().replace('_', ' ')
+                Text("Voice Coach: $status · ${sessionElapsedMs / 1000}s")
+                Text(if (voiceControlArmed) "Voice Control: Armed" else "Voice Control: Standby")
+                if (!micPermissionGranted) {
+                    Text("Microphone permission is required for voice commands and spoken answers.")
+                }
+                if (!lastCoachMessage.isNullOrBlank()) {
+                    Text("Coach: $lastCoachMessage")
+                }
+            }
             LinearProgressIndicator(
                 progress = { progressBarState.progress },
                 modifier = Modifier.fillMaxWidth()
@@ -197,11 +234,12 @@ fun SessionScreen(
                         val buttonState = characterButtonVisualState(
                             isPlaying = isPlaying,
                             character = char,
-                            highlightedCharacter = highlightedCharacter
+                            highlightedCharacter = highlightedCharacter,
+                            coachState = coachState
                         )
                         OutlinedButton(
                             onClick = {
-                                if (!isPlaying) {
+                                if (buttonState.enabled) {
                                     onCharacterPressed(char)
                                 }
                             },
@@ -236,7 +274,7 @@ fun SessionScreen(
         ) {
             Button(
                 onClick = onPlaySetPressed,
-                enabled = true,
+                enabled = isPlayTrainingSetEnabled(isPlaying, coachState),
                 colors = playTrainingSetButtonColors
             ) {
                 Text("Play Training Set")
@@ -244,7 +282,7 @@ fun SessionScreen(
 
             Button(
                 onClick = onAdvancePressed,
-                enabled = !isPlaying && nextCharacter != null
+                enabled = !isCoachSessionInProgress(coachState) && !isPlaying && nextCharacter != null
             ) {
                 val label = nextCharacter?.let { "Add Next Character ($it)" } ?: "Curriculum Complete"
                 Text(label)
@@ -252,10 +290,40 @@ fun SessionScreen(
 
             Button(
                 onClick = onRemovePressed,
-                enabled = !isPlaying && removableCharacter != null
+                enabled = !isCoachSessionInProgress(coachState) && !isPlaying && removableCharacter != null
             ) {
                 val label = removableCharacter?.let { "Remove Latest Character ($it)" } ?: "Remove Latest Character"
                 Text(label)
+            }
+
+            if (settings.handsFreeEnabled) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally)
+                ) {
+                    Button(
+                        onClick = onCoachStart,
+                        enabled = isCoachStartEnabled(coachState = coachState, isPlaying = isPlaying)
+                    ) {
+                        Text("Start Coach")
+                    }
+
+                    val pauseEnabled = coachState == CoachState.ROUND_ACTIVE || coachState == CoachState.BREAK_PROMPT
+                    val resumeEnabled = coachState == CoachState.PAUSED
+                    Button(
+                        onClick = if (resumeEnabled) onCoachResume else onCoachPause,
+                        enabled = pauseEnabled || resumeEnabled
+                    ) {
+                        Text(if (resumeEnabled) "Resume Coach" else "Pause Coach")
+                    }
+                }
+
+                Button(
+                    onClick = onCoachStop,
+                    enabled = coachState != CoachState.IDLE && coachState != CoachState.STOPPED
+                ) {
+                    Text("Stop Coach")
+                }
             }
         }
     }

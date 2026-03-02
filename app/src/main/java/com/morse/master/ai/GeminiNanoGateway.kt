@@ -2,7 +2,8 @@ package com.morse.master.ai
 
 class GeminiNanoGateway(
     private val fakeStatus: String? = null,
-    private val failPrompt: Boolean = false
+    private val failPrompt: Boolean = false,
+    private val fakeResponse: String = """{"command":"EXPAND_LIST","new_character":"U"}"""
 ) {
     fun checkAvailability(): NanoAvailability = when (fakeStatus) {
         "AVAILABLE" -> NanoAvailability.AVAILABLE
@@ -15,6 +16,6 @@ class GeminiNanoGateway(
         if (failPrompt) {
             return null
         }
-        return """{"command":"EXPAND_LIST","new_character":"U"}"""
+        return fakeResponse
     }
 }

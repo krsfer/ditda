@@ -18,6 +18,9 @@ class DitDaViewModelTest {
             assertThat(initial.settings.vibrationEnabled).isTrue()
             assertThat(initial.settings.highlightPlaybackEnabled).isTrue()
             assertThat(initial.settings.trainingSetRepeatCount).isEqualTo(0)
+            assertThat(initial.settings.handsFreeEnabled).isFalse()
+            assertThat(initial.settings.wakePhraseRequired).isTrue()
+            assertThat(initial.settings.feedbackVerbose).isFalse()
 
             vm.selectTab(AppTab.SETTINGS)
             assertThat(awaitItem().activeTab).isEqualTo(AppTab.SETTINGS)
@@ -57,6 +60,15 @@ class DitDaViewModelTest {
 
             vm.updateTrainingSetRepeatCount(TRAINING_SET_REPEAT_ENDLESS)
             assertThat(awaitItem().settings.trainingSetRepeatCount).isEqualTo(TRAINING_SET_REPEAT_ENDLESS)
+
+            vm.updateHandsFreeEnabled(true)
+            assertThat(awaitItem().settings.handsFreeEnabled).isTrue()
+
+            vm.updateWakePhraseRequired(false)
+            assertThat(awaitItem().settings.wakePhraseRequired).isFalse()
+
+            vm.updateFeedbackVerbose(true)
+            assertThat(awaitItem().settings.feedbackVerbose).isTrue()
         }
     }
 
@@ -177,6 +189,28 @@ class DitDaViewModelTest {
     }
 
     @Test
+    fun `coach commands synchronize coach state fields`() {
+        val vm = DitDaViewModel()
+
+        assertThat(vm.state.value.coachState).isEqualTo(com.morse.master.coach.CoachState.IDLE)
+        assertThat(vm.state.value.voiceControlArmed).isFalse()
+
+        vm.handleCoachCommand(com.morse.master.coach.CoachVoiceCommand.START_SESSION, nowMs = 0L)
+        assertThat(vm.state.value.coachState).isEqualTo(com.morse.master.coach.CoachState.ROUND_ACTIVE)
+        assertThat(vm.state.value.voiceControlArmed).isTrue()
+
+        vm.handleCoachCommand(com.morse.master.coach.CoachVoiceCommand.PAUSE, nowMs = 100L)
+        assertThat(vm.state.value.coachState).isEqualTo(com.morse.master.coach.CoachState.PAUSED)
+
+        vm.handleCoachCommand(com.morse.master.coach.CoachVoiceCommand.RESUME, nowMs = 200L)
+        assertThat(vm.state.value.coachState).isEqualTo(com.morse.master.coach.CoachState.ROUND_ACTIVE)
+
+        vm.handleCoachCommand(com.morse.master.coach.CoachVoiceCommand.STOP, nowMs = 300L)
+        assertThat(vm.state.value.coachState).isEqualTo(com.morse.master.coach.CoachState.STOPPED)
+        assertThat(vm.state.value.voiceControlArmed).isFalse()
+    }
+
+    @Test
     fun `loads and saves current level and settings with state store`() {
         val store = FakeDitDaStateStore(
             loadedState = DitDaPersistedState(
@@ -188,7 +222,10 @@ class DitDaViewModelTest {
                     vibrationEnabled = true,
                     highlightPlaybackEnabled = false,
                     trainingSetRepeatCount = TRAINING_SET_REPEAT_ENDLESS,
-                    darkMode = false
+                    darkMode = false,
+                    handsFreeEnabled = true,
+                    wakePhraseRequired = false,
+                    feedbackVerbose = true
                 ),
                 currentCharacters = listOf('K', 'M', 'U')
             )
@@ -202,6 +239,9 @@ class DitDaViewModelTest {
         assertThat(loaded.settings.soundEnabled).isFalse()
         assertThat(loaded.settings.highlightPlaybackEnabled).isFalse()
         assertThat(loaded.settings.trainingSetRepeatCount).isEqualTo(TRAINING_SET_REPEAT_ENDLESS)
+        assertThat(loaded.settings.handsFreeEnabled).isTrue()
+        assertThat(loaded.settings.wakePhraseRequired).isFalse()
+        assertThat(loaded.settings.feedbackVerbose).isTrue()
 
         vm.updateCharacterWpm(25)
         vm.advanceToNextCharacter()

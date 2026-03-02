@@ -1,5 +1,16 @@
 package com.morse.master.ui
 
+import com.morse.master.ai.CoachDecisionEngine
+import com.morse.master.coach.CoachState
+import com.morse.master.coach.CoachVoiceCommand
+import com.morse.master.coach.CommandParser
+import com.morse.master.coach.NoopCoachNarrationGateway
+import com.morse.master.coach.NoopSpeechRecognizerGateway
+import com.morse.master.coach.PhoneticVocabulary
+import com.morse.master.coach.PrefixWakePhraseGateway
+import com.morse.master.coach.VoiceAttempt
+import com.morse.master.coach.VoiceCoachCoordinator
+import com.morse.master.coach.VoiceCoachSettings
 import com.morse.master.domain.KochSequence
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,7 +31,10 @@ data class DitDaSettings(
     val vibrationEnabled: Boolean = true,
     val highlightPlaybackEnabled: Boolean = true,
     val trainingSetRepeatCount: Int = 0,
-    val darkMode: Boolean = true
+    val darkMode: Boolean = true,
+    val handsFreeEnabled: Boolean = false,
+    val wakePhraseRequired: Boolean = true,
+    val feedbackVerbose: Boolean = false
 )
 
 data class DitDaUiState(
@@ -31,12 +45,26 @@ data class DitDaUiState(
     val isPlaying: Boolean = false,
     val currentIteration: Int = 0,
     val highlightedCharacter: Char? = null,
-    val stopPlaybackRequested: Boolean = false
+    val stopPlaybackRequested: Boolean = false,
+    val coachState: CoachState = CoachState.IDLE,
+    val roundIndex: Int = 0,
+    val sessionElapsedMs: Long = 0L,
+    val lastCoachMessage: String? = null,
+    val voiceControlArmed: Boolean = false
 )
 
 class DitDaViewModel(
     private val stateStore: DitDaStateStore = InMemoryDitDaStateStore(),
-    private val shuffler: (List<Char>) -> List<Char> = { chars -> chars.shuffled() }
+    private val shuffler: (List<Char>) -> List<Char> = { chars -> chars.shuffled() },
+    private val coachCoordinator: VoiceCoachCoordinator = VoiceCoachCoordinator(
+        commandParser = CommandParser(),
+        vocabulary = PhoneticVocabulary(),
+        speechRecognizer = NoopSpeechRecognizerGateway(),
+        narration = NoopCoachNarrationGateway(),
+        wakePhraseGateway = PrefixWakePhraseGateway(),
+        settings = VoiceCoachSettings(),
+        orchestrator = CoachDecisionEngine()
+    )
 ) {
     private companion object {
         private const val BASE_CURRICULUM_SIZE = 2
@@ -46,6 +74,13 @@ class DitDaViewModel(
 
     private val _state = MutableStateFlow(loadInitialState())
     val state: StateFlow<DitDaUiState> = _state.asStateFlow()
+
+    init {
+        coachCoordinator.setCurrentCharacters(_state.value.currentCharacters)
+        coachCoordinator.setWakePhraseRequired(_state.value.settings.wakePhraseRequired)
+        coachCoordinator.setFeedbackVerbose(_state.value.settings.feedbackVerbose)
+        syncCoachState(persist = false)
+    }
 
     fun selectTab(tab: AppTab) {
         updateState { it.copy(activeTab = tab) }
@@ -88,6 +123,23 @@ class DitDaViewModel(
         updateAndPersist { it.copy(settings = it.settings.copy(trainingSetRepeatCount = clamped)) }
     }
 
+    fun updateHandsFreeEnabled(enabled: Boolean) {
+        updateAndPersist { it.copy(settings = it.settings.copy(handsFreeEnabled = enabled)) }
+        if (!enabled) {
+            handleCoachCommand(CoachVoiceCommand.STOP)
+        }
+    }
+
+    fun updateWakePhraseRequired(enabled: Boolean) {
+        updateAndPersist { it.copy(settings = it.settings.copy(wakePhraseRequired = enabled)) }
+        coachCoordinator.setWakePhraseRequired(enabled)
+    }
+
+    fun updateFeedbackVerbose(enabled: Boolean) {
+        updateAndPersist { it.copy(settings = it.settings.copy(feedbackVerbose = enabled)) }
+        coachCoordinator.setFeedbackVerbose(enabled)
+    }
+
     fun setPlaying(value: Boolean) {
         updateState { it.copy(isPlaying = value) }
     }
@@ -108,6 +160,7 @@ class DitDaViewModel(
         val current = _state.value.currentCharacters
         val next = KochSequence.full().firstOrNull { it !in current } ?: return
         val updated = current + next
+        coachCoordinator.setCurrentCharacters(updated)
         updateAndPersist {
             it.copy(
                 currentCharacters = updated,
@@ -121,6 +174,7 @@ class DitDaViewModel(
         if (current.size <= BASE_CURRICULUM_SIZE) return
 
         val updated = current.dropLast(1)
+        coachCoordinator.setCurrentCharacters(updated)
         updateAndPersist {
             it.copy(
                 currentCharacters = updated,
@@ -148,6 +202,45 @@ class DitDaViewModel(
             randomized = current.drop(1) + current.first()
         }
         return randomized
+    }
+
+    fun handleCoachCommand(command: CoachVoiceCommand, nowMs: Long = System.currentTimeMillis()) {
+        coachCoordinator.handleCommand(command, nowMs)
+        syncCoachState(persist = true)
+    }
+
+    fun handleCoachTranscript(transcript: String, nowMs: Long = System.currentTimeMillis()) {
+        coachCoordinator.handleTranscript(transcript, nowMs)
+        syncCoachState(persist = true)
+    }
+
+    suspend fun pollCoachVoiceCommand(
+        timeoutMs: Long,
+        nowMs: Long = System.currentTimeMillis()
+    ): CoachVoiceCommand? {
+        val command = coachCoordinator.pollVoiceCommand(timeoutMs, nowMs)
+        syncCoachState(persist = true)
+        return command
+    }
+
+    suspend fun captureCoachAttempt(
+        expectedChar: Char,
+        playPrompt: suspend (assistLevel: Int) -> Unit
+    ): VoiceAttempt {
+        return coachCoordinator.captureAttempt(
+            expectedChar = expectedChar,
+            unlockedCharacters = _state.value.currentCharacters,
+            playPrompt = playPrompt
+        )
+    }
+
+    suspend fun awaitCoachNarrationIdle(maxWaitMs: Long = 2_500L) {
+        coachCoordinator.awaitNarrationIdle(maxWaitMs)
+    }
+
+    fun onCoachRoundCompleted(attempts: List<VoiceAttempt>, nowMs: Long = System.currentTimeMillis()) {
+        coachCoordinator.onRoundCompleted(attempts, nowMs)
+        syncCoachState(persist = true)
     }
 
     private fun loadInitialState(): DitDaUiState {
@@ -184,6 +277,23 @@ class DitDaViewModel(
         )
     }
 
+    private fun syncCoachState(persist: Boolean) {
+        val coachState = coachCoordinator.state.value
+        val updated = _state.value.copy(
+            currentCharacters = coachState.currentCharacters,
+            nextCharacter = KochSequence.full().firstOrNull { it !in coachState.currentCharacters },
+            coachState = coachState.coachState,
+            roundIndex = coachState.roundIndex,
+            sessionElapsedMs = coachState.sessionElapsedMs,
+            lastCoachMessage = coachState.lastCoachMessage,
+            voiceControlArmed = coachState.voiceControlArmed
+        )
+        _state.value = updated
+        if (persist) {
+            persistState(updated)
+        }
+    }
+
     private fun updateState(updater: (DitDaUiState) -> DitDaUiState) {
         _state.value = updater(_state.value)
     }
@@ -191,10 +301,14 @@ class DitDaViewModel(
     private fun updateAndPersist(updater: (DitDaUiState) -> DitDaUiState) {
         val updated = updater(_state.value)
         _state.value = updated
+        persistState(updated)
+    }
+
+    private fun persistState(state: DitDaUiState) {
         stateStore.save(
             DitDaPersistedState(
-                settings = updated.settings,
-                currentCharacters = updated.currentCharacters
+                settings = state.settings,
+                currentCharacters = state.currentCharacters
             )
         )
     }
