@@ -4,6 +4,7 @@ package com.morse.master.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.PowerManager
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -14,7 +15,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -28,6 +31,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -38,6 +42,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.morse.master.audio.MorsePracticePlayer
@@ -60,6 +68,8 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 private const val REPEAT_SLIDER_ENDLESS_VALUE = 11
+private const val TEXT_PLAYBACK_PAUSE_POLL_MS = 60L
+private const val PARTIAL_WAKE_LOCK_TAG = "com.morse.master:session"
 
 internal fun maxTrainingLevels(): Int = KochSequence.full().size
 
@@ -88,12 +98,80 @@ internal fun trainingSetRepeatLabel(repeatCount: Int): String = when (repeatCoun
 
 internal fun tabToPage(tab: AppTab): Int = when (tab) {
     AppTab.PRACTICE -> 0
-    AppTab.SETTINGS -> 1
+    AppTab.TEXT -> 1
+    AppTab.SETTINGS -> 2
 }
 
 internal fun pageToTab(page: Int): AppTab = when (page) {
-    1 -> AppTab.SETTINGS
+    1 -> AppTab.TEXT
+    2 -> AppTab.SETTINGS
     else -> AppTab.PRACTICE
+}
+
+internal fun normalizeTextPlaybackInput(
+    input: String,
+    allowedChars: Set<Char> = KochSequence.full().map { it.uppercaseChar() }.toSet()
+): String {
+    val normalized = StringBuilder()
+    var shouldInsertSpace = false
+
+    input.forEach { raw ->
+        val char = raw.uppercaseChar()
+        when {
+            char in allowedChars -> {
+                if (shouldInsertSpace && normalized.isNotEmpty()) {
+                    normalized.append(' ')
+                }
+                normalized.append(char)
+                shouldInsertSpace = false
+            }
+
+            raw.isWhitespace() -> {
+                shouldInsertSpace = normalized.isNotEmpty()
+            }
+        }
+    }
+
+    return normalized.toString().trim()
+}
+
+internal fun isTextPlaybackStartEnabled(
+    input: String,
+    isPlaying: Boolean,
+    textPlaybackActive: Boolean
+): Boolean {
+    return !isPlaying &&
+        !textPlaybackActive &&
+        normalizeTextPlaybackInput(input).isNotEmpty()
+}
+
+internal fun textPlaybackWordPauseMs(timing: MorseTiming): Long =
+    timing.interCharGapMs.toLong() * 2L
+
+internal fun textPlaybackHighlightedIndex(
+    normalizedInput: String,
+    currentIndex: Int?
+): Int? {
+    val safeIndex = currentIndex ?: return null
+    if (safeIndex !in normalizedInput.indices) return null
+    return safeIndex.takeIf { normalizedInput[it] != ' ' }
+}
+
+internal fun highlightedTextPlaybackPreview(
+    normalizedInput: String,
+    highlightedIndex: Int?,
+    highlightColor: androidx.compose.ui.graphics.Color
+): AnnotatedString {
+    return buildAnnotatedString {
+        append(normalizedInput)
+        if (highlightedIndex != null) {
+            addStyle(
+                style = SpanStyle(background = highlightColor),
+                start = highlightedIndex,
+                end = highlightedIndex + 1
+            )
+        }
+    }
 }
 
 internal fun shouldRunVoiceCommandListener(
@@ -122,12 +200,55 @@ internal fun shouldRunVoiceRoundLoop(
         coachState == CoachState.ROUND_ACTIVE
 }
 
+internal fun shouldKeepScreenAwake(
+    activeTab: AppTab,
+    isPlaying: Boolean,
+    coachState: CoachState
+): Boolean {
+    return shouldHoldPartialWakeLock(
+        activeTab = activeTab,
+        isPlaying = isPlaying,
+        coachState = coachState
+    )
+}
+
+internal fun shouldHoldPartialWakeLock(
+    activeTab: AppTab,
+    isPlaying: Boolean,
+    coachState: CoachState
+): Boolean {
+    if (isPlaying) {
+        return true
+    }
+    val coachSessionActive = coachState != CoachState.IDLE && coachState != CoachState.STOPPED
+    return activeTab == AppTab.PRACTICE && coachSessionActive
+}
+
 @Composable
 fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
     val player = remember(context) { MorsePracticePlayer(context) }
+    val keepScreenAwake = shouldKeepScreenAwake(
+        activeTab = state.activeTab,
+        isPlaying = state.isPlaying,
+        coachState = state.coachState
+    )
+    val holdPartialWakeLock = shouldHoldPartialWakeLock(
+        activeTab = state.activeTab,
+        isPlaying = state.isPlaying,
+        coachState = state.coachState
+    )
+    val powerManager = remember(context) {
+        context.getSystemService(PowerManager::class.java)
+    }
+    val partialWakeLock = remember(powerManager) {
+        powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, PARTIAL_WAKE_LOCK_TAG)?.apply {
+            setReferenceCounted(false)
+        }
+    }
     var micPermissionGranted by remember(context) {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -170,6 +291,29 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
     LaunchedEffect(state.settings.handsFreeEnabled, micPermissionGranted) {
         if (state.settings.handsFreeEnabled && !micPermissionGranted) {
             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    SideEffect {
+        view.keepScreenOn = keepScreenAwake
+    }
+    DisposableEffect(view) {
+        onDispose {
+            view.keepScreenOn = false
+        }
+    }
+    DisposableEffect(partialWakeLock, holdPartialWakeLock) {
+        if (holdPartialWakeLock && partialWakeLock != null && !partialWakeLock.isHeld) {
+            try {
+                partialWakeLock.acquire()
+            } catch (_: SecurityException) {
+                // App keeps running without a wake lock if permission is unavailable.
+            }
+        }
+        onDispose {
+            if (partialWakeLock != null && partialWakeLock.isHeld) {
+                partialWakeLock.release()
+            }
         }
     }
 
@@ -290,6 +434,15 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                             text = { Text("Practice") }
                         )
                         Tab(
+                            selected = pagerState.currentPage == tabToPage(AppTab.TEXT),
+                            onClick = {
+                                scope.launch {
+                                    pagerState.animateScrollToPage(tabToPage(AppTab.TEXT))
+                                }
+                            },
+                            text = { Text("Text") }
+                        )
+                        Tab(
                             selected = pagerState.currentPage == tabToPage(AppTab.SETTINGS),
                             onClick = {
                                 scope.launch {
@@ -357,7 +510,7 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                                             repetition += 1
                                             viewModel.setCurrentIteration(repetition)
 
-                                            val playSequence = viewModel.nextRandomizedTrainingSet()
+                                            val playSequence = viewModel.nextTrainingSetForPlayback()
                                             for ((index, char) in playSequence.withIndex()) {
                                                 if (viewModel.isPlaybackStopRequested()) break@playback
 
@@ -417,6 +570,115 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                         }
                     )
 
+                    AppTab.TEXT -> TextPlaybackScreen(
+                        input = state.textPlaybackInput,
+                        normalizedInput = normalizeTextPlaybackInput(state.textPlaybackInput),
+                        isPlaying = state.isPlaying,
+                        textPlaybackActive = state.textPlaybackActive,
+                        textPlaybackPaused = state.textPlaybackPaused,
+                        progress = state.textPlaybackProgress,
+                        currentIndex = state.textPlaybackCurrentIndex,
+                        textPlaybackLoopEnabled = state.textPlaybackLoopEnabled,
+                        modifier = Modifier.fillMaxSize(),
+                        onInputChange = viewModel::updateTextPlaybackInput,
+                        onLoopEnabledChange = viewModel::updateTextPlaybackLoopEnabled,
+                        onPlayPressed = {
+                            if (!isTextPlaybackStartEnabled(
+                                    input = state.textPlaybackInput,
+                                    isPlaying = state.isPlaying,
+                                    textPlaybackActive = state.textPlaybackActive
+                                )
+                            ) {
+                                return@TextPlaybackScreen
+                            }
+                            val sequence = normalizeTextPlaybackInput(state.textPlaybackInput).toList()
+                            if (sequence.isEmpty()) return@TextPlaybackScreen
+
+                            viewModel.clearPlaybackStopRequest()
+                            viewModel.resetTextPlaybackProgress()
+                            viewModel.setTextPlaybackPaused(false)
+                            viewModel.clearTextPlaybackCurrentIndex()
+                            viewModel.setTextPlaybackActive(true)
+                            viewModel.setPlaying(true)
+
+                            scope.launch {
+                                try {
+                                    playback@ while (isActive && !viewModel.isPlaybackStopRequested()) {
+                                        for ((index, token) in sequence.withIndex()) {
+                                            if (viewModel.isPlaybackStopRequested()) break@playback
+
+                                            while (isActive) {
+                                                val loopState = viewModel.state.value
+                                                if (viewModel.isPlaybackStopRequested() || !loopState.textPlaybackActive) {
+                                                    break
+                                                }
+                                                if (!loopState.textPlaybackPaused) {
+                                                    break
+                                                }
+                                                delay(TEXT_PLAYBACK_PAUSE_POLL_MS)
+                                            }
+                                            if (viewModel.isPlaybackStopRequested()) break@playback
+
+                                            val loopState = viewModel.state.value
+                                            val loopSettings = loopState.settings
+                                            val timing = MorseTiming(
+                                                characterWpm = loopSettings.characterWpm,
+                                                effectiveWpm = loopSettings.effectiveWpm
+                                            )
+
+                                            if (token == ' ') {
+                                                viewModel.clearTextPlaybackCurrentIndex()
+                                                delay(textPlaybackWordPauseMs(timing))
+                                            } else {
+                                                viewModel.setTextPlaybackCurrentIndex(index)
+                                                player.playCharacter(token, loopSettings)
+                                                viewModel.clearTextPlaybackCurrentIndex()
+                                            }
+                                            viewModel.setTextPlaybackProgress(index + 1)
+
+                                            val nextToken = sequence.getOrNull(index + 1)
+                                            if (!viewModel.isPlaybackStopRequested() &&
+                                                nextToken != null &&
+                                                token != ' ' &&
+                                                nextToken != ' '
+                                            ) {
+                                                val dynamicSettings = viewModel.state.value.settings
+                                                val dynamicTiming = MorseTiming(
+                                                    characterWpm = dynamicSettings.characterWpm,
+                                                    effectiveWpm = dynamicSettings.effectiveWpm
+                                                )
+                                                delay(dynamicTiming.interCharGapMs.toLong())
+                                            }
+                                        }
+
+                                        if (!viewModel.state.value.textPlaybackLoopEnabled) {
+                                            break@playback
+                                        }
+                                        if (!viewModel.isPlaybackStopRequested()) {
+                                            viewModel.resetTextPlaybackProgress()
+                                        }
+                                    }
+                                } finally {
+                                    viewModel.clearPlaybackStopRequest()
+                                    viewModel.setTextPlaybackPaused(false)
+                                    viewModel.clearTextPlaybackCurrentIndex()
+                                    viewModel.setTextPlaybackActive(false)
+                                    viewModel.setPlaying(false)
+                                }
+                            }
+                        },
+                        onPausePressed = {
+                            viewModel.setTextPlaybackPaused(true)
+                        },
+                        onResumePressed = {
+                            viewModel.setTextPlaybackPaused(false)
+                        },
+                        onStopPressed = {
+                            viewModel.requestPlaybackStop()
+                            viewModel.setTextPlaybackPaused(false)
+                        }
+                    )
+
                     AppTab.SETTINGS -> SettingsScreen(
                         settings = state.settings,
                         modifier = Modifier.fillMaxSize(),
@@ -427,6 +689,7 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                         onVibrationEnabledChange = viewModel::updateVibrationEnabled,
                         onHighlightPlaybackEnabledChange = viewModel::updateHighlightPlaybackEnabled,
                         onTrainingSetRepeatCountChange = viewModel::updateTrainingSetRepeatCount,
+                        onRandomizeTrainingSetOrderChange = viewModel::updateRandomizeTrainingSetOrder,
                         onDarkModeChange = viewModel::updateDarkMode,
                         onHandsFreeEnabledChange = viewModel::updateHandsFreeEnabled,
                         onWakePhraseRequiredChange = viewModel::updateWakePhraseRequired,
@@ -470,6 +733,118 @@ private fun rememberDitDaViewModel(): DitDaViewModel {
 }
 
 @Composable
+private fun TextPlaybackScreen(
+    input: String,
+    normalizedInput: String,
+    isPlaying: Boolean,
+    textPlaybackActive: Boolean,
+    textPlaybackPaused: Boolean,
+    progress: Int,
+    currentIndex: Int?,
+    textPlaybackLoopEnabled: Boolean,
+    modifier: Modifier = Modifier,
+    onInputChange: (String) -> Unit,
+    onLoopEnabledChange: (Boolean) -> Unit,
+    onPlayPressed: () -> Unit,
+    onPausePressed: () -> Unit,
+    onResumePressed: () -> Unit,
+    onStopPressed: () -> Unit
+) {
+    val playableCount = normalizedInput.length
+    val displayProgress = progress.coerceIn(0, playableCount)
+    val highlightedIndex = textPlaybackHighlightedIndex(
+        normalizedInput = normalizedInput,
+        currentIndex = currentIndex
+    )
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Text Playback")
+        Text("Paste text and play as Morse using current settings.")
+        OutlinedTextField(
+            value = input,
+            onValueChange = onInputChange,
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 6,
+            maxLines = 10,
+            label = { Text("Input") }
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Loop Text")
+            Switch(
+                checked = textPlaybackLoopEnabled,
+                onCheckedChange = onLoopEnabledChange
+            )
+        }
+
+        Text("Playable sequence: $playableCount chars")
+        if (normalizedInput.isNotEmpty()) {
+            Text(
+                text = highlightedTextPlaybackPreview(
+                    normalizedInput = normalizedInput,
+                    highlightedIndex = highlightedIndex,
+                    highlightColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            )
+        }
+        Text(
+            when {
+                textPlaybackActive && textPlaybackPaused -> "Status: Paused"
+                textPlaybackActive -> "Status: Playing"
+                else -> "Status: Idle"
+            }
+        )
+        if (textPlaybackActive) {
+            val loopLabel = if (textPlaybackLoopEnabled) " · Looping" else ""
+            Text("Progress: $displayProgress / $playableCount$loopLabel")
+        }
+        if (isPlaying && !textPlaybackActive) {
+            Text("Another playback is active. Stop it before starting text playback.")
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (textPlaybackActive) {
+                Button(
+                    onClick = onStopPressed
+                ) {
+                    Text("Stop")
+                }
+            } else {
+                Button(
+                    onClick = onPlayPressed,
+                    enabled = isTextPlaybackStartEnabled(
+                        input = input,
+                        isPlaying = isPlaying,
+                        textPlaybackActive = textPlaybackActive
+                    )
+                ) {
+                    Text("Play Text")
+                }
+            }
+
+            Button(
+                onClick = if (textPlaybackPaused) onResumePressed else onPausePressed,
+                enabled = textPlaybackActive
+            ) {
+                Text(if (textPlaybackPaused) "Resume" else "Pause")
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsScreen(
     settings: DitDaSettings,
     modifier: Modifier = Modifier,
@@ -480,6 +855,7 @@ private fun SettingsScreen(
     onVibrationEnabledChange: (Boolean) -> Unit,
     onHighlightPlaybackEnabledChange: (Boolean) -> Unit,
     onTrainingSetRepeatCountChange: (Int) -> Unit,
+    onRandomizeTrainingSetOrderChange: (Boolean) -> Unit,
     onDarkModeChange: (Boolean) -> Unit,
     onHandsFreeEnabledChange: (Boolean) -> Unit,
     onWakePhraseRequiredChange: (Boolean) -> Unit,
@@ -524,6 +900,18 @@ private fun SettingsScreen(
             valueRange = 0f..REPEAT_SLIDER_ENDLESS_VALUE.toFloat(),
             steps = REPEAT_SLIDER_ENDLESS_VALUE - 1
         )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Randomize Training Set Order")
+            Switch(
+                checked = settings.randomizeTrainingSetOrder,
+                onCheckedChange = onRandomizeTrainingSetOrderChange
+            )
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),

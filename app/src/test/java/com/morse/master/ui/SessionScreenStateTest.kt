@@ -6,6 +6,36 @@ import org.junit.Test
 
 class SessionScreenStateTest {
     @Test
+    fun `keeps characters in a single row when count is at most six`() {
+        val rows = characterGridRows(listOf('K', 'M', 'U', 'R', 'E', 'S'))
+
+        assertThat(rows).containsExactly(
+            listOf('K', 'M', 'U', 'R', 'E', 'S')
+        )
+    }
+
+    @Test
+    fun `wraps characters to a second row after six columns`() {
+        val rows = characterGridRows(listOf('K', 'M', 'U', 'R', 'E', 'S', 'N'))
+
+        assertThat(rows).containsExactly(
+            listOf('K', 'M', 'U', 'R', 'E', 'S'),
+            listOf('N')
+        ).inOrder()
+    }
+
+    @Test
+    fun `preserves character order while wrapping rows of six`() {
+        val rows = characterGridRows(listOf('K', 'M', 'U', 'R', 'E', 'S', 'N', 'A', 'P', 'T', 'L', 'W', 'I'))
+
+        assertThat(rows).containsExactly(
+            listOf('K', 'M', 'U', 'R', 'E', 'S'),
+            listOf('N', 'A', 'P', 'T', 'L', 'W'),
+            listOf('I')
+        ).inOrder()
+    }
+
+    @Test
     fun `disables character buttons while manual playback is active and keeps highlight state`() {
         val playingHighlighted = characterButtonVisualState(
             isPlaying = true,

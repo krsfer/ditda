@@ -52,7 +52,25 @@ class PhoneticVocabulary(
             'W' to setOf("whiskey", "whisky", "double u", "double you"),
             'X' to setOf("xray", "x-ray", "ex"),
             'Y' to setOf("yankee", "why"),
-            'Z' to setOf("zulu", "zee", "zed")
+            'Z' to setOf("zulu", "zee", "zed"),
+            '1' to setOf("one", "1"),
+            '2' to setOf("two", "2", "to", "too"),
+            '3' to setOf("three", "3"),
+            '4' to setOf("four", "4", "for"),
+            '5' to setOf("five", "5"),
+            '6' to setOf("six", "6"),
+            '7' to setOf("seven", "7"),
+            '8' to setOf("eight", "8", "ate"),
+            '9' to setOf("nine", "9"),
+            '0' to setOf("zero", "0", "oh"),
+            '.' to setOf("period", "full stop", "dot"),
+            ',' to setOf("comma"),
+            '?' to setOf("question mark"),
+            '/' to setOf("slash", "forward slash"),
+            '=' to setOf("equals", "equal sign"),
+            '+' to setOf("plus"),
+            '-' to setOf("minus", "dash", "hyphen"),
+            '@' to setOf("at", "at sign")
         )
     }
 }

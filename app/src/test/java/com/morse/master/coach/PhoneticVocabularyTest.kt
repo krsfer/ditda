@@ -21,4 +21,10 @@ class PhoneticVocabularyTest {
     fun `normalizes whitespace before lookup`() {
         assertThat(vocabulary.resolve("   kilo   ", unlockedCharacters = listOf('K', 'M'))).isEqualTo('K')
     }
+
+    @Test
+    fun `resolves numeric and punctuation tokens for unlocked set`() {
+        assertThat(vocabulary.resolve("five", unlockedCharacters = listOf('5'))).isEqualTo('5')
+        assertThat(vocabulary.resolve("question mark", unlockedCharacters = listOf('?'))).isEqualTo('?')
+    }
 }

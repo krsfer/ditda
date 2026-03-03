@@ -35,6 +35,7 @@ internal data class TrainingSetProgressBarState(
 )
 
 private const val BASE_CURRICULUM_SIZE = 2
+private const val CHARACTER_GRID_COLUMNS = 6
 
 internal fun isCoachSessionInProgress(coachState: CoachState): Boolean {
     return coachState != CoachState.IDLE && coachState != CoachState.STOPPED
@@ -70,6 +71,10 @@ internal fun latestRemovableCharacter(characters: List<Char>): Char? {
     } else {
         null
     }
+}
+
+internal fun characterGridRows(characters: List<Char>, columns: Int = CHARACTER_GRID_COLUMNS): List<List<Char>> {
+    return characters.chunked(columns.coerceAtLeast(1))
 }
 
 internal fun playbackIterationCounterText(
@@ -225,7 +230,7 @@ fun SessionScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            characters.chunked(4).forEach { row ->
+            characterGridRows(characters).forEach { row ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Center

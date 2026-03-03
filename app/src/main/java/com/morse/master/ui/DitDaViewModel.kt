@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 enum class AppTab {
     PRACTICE,
+    TEXT,
     SETTINGS
 }
 
@@ -31,6 +32,7 @@ data class DitDaSettings(
     val vibrationEnabled: Boolean = true,
     val highlightPlaybackEnabled: Boolean = true,
     val trainingSetRepeatCount: Int = 0,
+    val randomizeTrainingSetOrder: Boolean = true,
     val darkMode: Boolean = true,
     val handsFreeEnabled: Boolean = false,
     val wakePhraseRequired: Boolean = true,
@@ -50,7 +52,13 @@ data class DitDaUiState(
     val roundIndex: Int = 0,
     val sessionElapsedMs: Long = 0L,
     val lastCoachMessage: String? = null,
-    val voiceControlArmed: Boolean = false
+    val voiceControlArmed: Boolean = false,
+    val textPlaybackInput: String = "",
+    val textPlaybackActive: Boolean = false,
+    val textPlaybackPaused: Boolean = false,
+    val textPlaybackProgress: Int = 0,
+    val textPlaybackLoopEnabled: Boolean = false,
+    val textPlaybackCurrentIndex: Int? = null
 )
 
 class DitDaViewModel(
@@ -74,6 +82,7 @@ class DitDaViewModel(
 
     private val _state = MutableStateFlow(loadInitialState())
     val state: StateFlow<DitDaUiState> = _state.asStateFlow()
+    private var lastRandomizedTrainingSet: List<Char>? = null
 
     init {
         coachCoordinator.setCurrentCharacters(_state.value.currentCharacters)
@@ -123,6 +132,10 @@ class DitDaViewModel(
         updateAndPersist { it.copy(settings = it.settings.copy(trainingSetRepeatCount = clamped)) }
     }
 
+    fun updateRandomizeTrainingSetOrder(enabled: Boolean) {
+        updateAndPersist { it.copy(settings = it.settings.copy(randomizeTrainingSetOrder = enabled)) }
+    }
+
     fun updateHandsFreeEnabled(enabled: Boolean) {
         updateAndPersist { it.copy(settings = it.settings.copy(handsFreeEnabled = enabled)) }
         if (!enabled) {
@@ -154,6 +167,38 @@ class DitDaViewModel(
 
     fun setHighlightedCharacter(character: Char?) {
         updateState { it.copy(highlightedCharacter = character) }
+    }
+
+    fun updateTextPlaybackInput(value: String) {
+        updateAndPersist { it.copy(textPlaybackInput = value) }
+    }
+
+    fun updateTextPlaybackLoopEnabled(enabled: Boolean) {
+        updateAndPersist { it.copy(textPlaybackLoopEnabled = enabled) }
+    }
+
+    fun setTextPlaybackActive(active: Boolean) {
+        updateState { it.copy(textPlaybackActive = active) }
+    }
+
+    fun setTextPlaybackPaused(paused: Boolean) {
+        updateState { it.copy(textPlaybackPaused = paused) }
+    }
+
+    fun setTextPlaybackProgress(progress: Int) {
+        updateState { it.copy(textPlaybackProgress = progress.coerceAtLeast(0)) }
+    }
+
+    fun resetTextPlaybackProgress() {
+        setTextPlaybackProgress(0)
+    }
+
+    fun setTextPlaybackCurrentIndex(index: Int?) {
+        updateState { it.copy(textPlaybackCurrentIndex = index) }
+    }
+
+    fun clearTextPlaybackCurrentIndex() {
+        setTextPlaybackCurrentIndex(null)
     }
 
     fun advanceToNextCharacter() {
@@ -198,10 +243,23 @@ class DitDaViewModel(
         if (current.size < 2) return current
 
         var randomized = shuffler(current)
-        if (randomized == current) {
+        val previous = lastRandomizedTrainingSet
+        if (previous != null && randomized == previous) {
             randomized = current.drop(1) + current.first()
+            if (randomized == previous && current.size > 2) {
+                randomized = current.drop(2) + current.take(2)
+            }
         }
+        lastRandomizedTrainingSet = randomized
         return randomized
+    }
+
+    fun nextTrainingSetForPlayback(): List<Char> {
+        return if (_state.value.settings.randomizeTrainingSetOrder) {
+            nextRandomizedTrainingSet()
+        } else {
+            _state.value.currentCharacters
+        }
     }
 
     fun handleCoachCommand(command: CoachVoiceCommand, nowMs: Long = System.currentTimeMillis()) {
@@ -250,7 +308,9 @@ class DitDaViewModel(
         return DitDaUiState(
             settings = normalizedSettings,
             currentCharacters = normalizedCharacters,
-            nextCharacter = KochSequence.full().firstOrNull { it !in normalizedCharacters }
+            nextCharacter = KochSequence.full().firstOrNull { it !in normalizedCharacters },
+            textPlaybackInput = loaded.textPlaybackInput,
+            textPlaybackLoopEnabled = loaded.textPlaybackLoopEnabled
         )
     }
 
@@ -308,7 +368,9 @@ class DitDaViewModel(
         stateStore.save(
             DitDaPersistedState(
                 settings = state.settings,
-                currentCharacters = state.currentCharacters
+                currentCharacters = state.currentCharacters,
+                textPlaybackInput = state.textPlaybackInput,
+                textPlaybackLoopEnabled = state.textPlaybackLoopEnabled
             )
         )
     }

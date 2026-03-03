@@ -27,4 +27,14 @@ class MorseSymbolPlannerTest {
         val plan = planner.planFor('*', DitDaSettings())
         assertThat(plan).isEmpty()
     }
+
+    @Test
+    fun `supports digits and punctuation`() {
+        val planner = MorseSymbolPlanner()
+        val settings = DitDaSettings()
+
+        assertThat(planner.planFor('5', settings)).isNotEmpty()
+        assertThat(planner.planFor('?', settings)).isNotEmpty()
+        assertThat(planner.planFor('@', settings)).isNotEmpty()
+    }
 }

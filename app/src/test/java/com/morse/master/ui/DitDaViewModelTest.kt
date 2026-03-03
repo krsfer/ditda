@@ -18,9 +18,16 @@ class DitDaViewModelTest {
             assertThat(initial.settings.vibrationEnabled).isTrue()
             assertThat(initial.settings.highlightPlaybackEnabled).isTrue()
             assertThat(initial.settings.trainingSetRepeatCount).isEqualTo(0)
+            assertThat(initial.settings.randomizeTrainingSetOrder).isTrue()
             assertThat(initial.settings.handsFreeEnabled).isFalse()
             assertThat(initial.settings.wakePhraseRequired).isTrue()
             assertThat(initial.settings.feedbackVerbose).isFalse()
+            assertThat(initial.textPlaybackInput).isEmpty()
+            assertThat(initial.textPlaybackActive).isFalse()
+            assertThat(initial.textPlaybackPaused).isFalse()
+            assertThat(initial.textPlaybackProgress).isEqualTo(0)
+            assertThat(initial.textPlaybackLoopEnabled).isFalse()
+            assertThat(initial.textPlaybackCurrentIndex).isNull()
 
             vm.selectTab(AppTab.SETTINGS)
             assertThat(awaitItem().activeTab).isEqualTo(AppTab.SETTINGS)
@@ -61,6 +68,9 @@ class DitDaViewModelTest {
             vm.updateTrainingSetRepeatCount(TRAINING_SET_REPEAT_ENDLESS)
             assertThat(awaitItem().settings.trainingSetRepeatCount).isEqualTo(TRAINING_SET_REPEAT_ENDLESS)
 
+            vm.updateRandomizeTrainingSetOrder(false)
+            assertThat(awaitItem().settings.randomizeTrainingSetOrder).isFalse()
+
             vm.updateHandsFreeEnabled(true)
             assertThat(awaitItem().settings.handsFreeEnabled).isTrue()
 
@@ -69,6 +79,42 @@ class DitDaViewModelTest {
 
             vm.updateFeedbackVerbose(true)
             assertThat(awaitItem().settings.feedbackVerbose).isTrue()
+        }
+    }
+
+    @Test
+    fun `tracks text playback input state and pause controls`() = runTest {
+        val vm = DitDaViewModel()
+
+        vm.state.test {
+            assertThat(awaitItem().textPlaybackInput).isEmpty()
+
+            vm.updateTextPlaybackInput("CQ CQ DE F4ABC")
+            assertThat(awaitItem().textPlaybackInput).isEqualTo("CQ CQ DE F4ABC")
+
+            vm.setTextPlaybackActive(true)
+            assertThat(awaitItem().textPlaybackActive).isTrue()
+
+            vm.setTextPlaybackPaused(true)
+            assertThat(awaitItem().textPlaybackPaused).isTrue()
+
+            vm.setTextPlaybackProgress(5)
+            assertThat(awaitItem().textPlaybackProgress).isEqualTo(5)
+
+            vm.updateTextPlaybackLoopEnabled(true)
+            assertThat(awaitItem().textPlaybackLoopEnabled).isTrue()
+
+            vm.setTextPlaybackCurrentIndex(3)
+            assertThat(awaitItem().textPlaybackCurrentIndex).isEqualTo(3)
+
+            vm.resetTextPlaybackProgress()
+            assertThat(awaitItem().textPlaybackProgress).isEqualTo(0)
+
+            vm.clearTextPlaybackCurrentIndex()
+            assertThat(awaitItem().textPlaybackCurrentIndex).isNull()
+
+            vm.setTextPlaybackActive(false)
+            assertThat(awaitItem().textPlaybackActive).isFalse()
         }
     }
 
@@ -121,7 +167,7 @@ class DitDaViewModelTest {
 
         vm.state.test {
             var state = awaitItem()
-            repeat(23) {
+            repeat(com.morse.master.domain.KochSequence.full().size - 2) {
                 vm.advanceToNextCharacter()
                 state = awaitItem()
             }
@@ -144,11 +190,32 @@ class DitDaViewModelTest {
     }
 
     @Test
-    fun `forces different order when shuffler returns original`() {
+    fun `returns in-order play sequence when randomization setting is disabled`() {
+        val vm = DitDaViewModel(shuffler = { it.reversed() })
+
+        vm.updateRandomizeTrainingSetOrder(false)
+
+        val sequence = vm.nextTrainingSetForPlayback()
+        assertThat(sequence).containsExactly('K', 'M').inOrder()
+    }
+
+    @Test
+    fun `randomized playback varies across consecutive training-set requests`() {
         val vm = DitDaViewModel(shuffler = { it })
 
-        val sequence = vm.nextRandomizedTrainingSet()
-        assertThat(sequence).containsExactly('M', 'K').inOrder()
+        val first = vm.nextTrainingSetForPlayback()
+        val second = vm.nextTrainingSetForPlayback()
+
+        assertThat(second).isNotEqualTo(first)
+    }
+
+    @Test
+    fun `avoids consecutive duplicate order when shuffler returns original`() {
+        val vm = DitDaViewModel(shuffler = { it })
+
+        val first = vm.nextRandomizedTrainingSet()
+        val second = vm.nextRandomizedTrainingSet()
+        assertThat(second).isNotEqualTo(first)
     }
 
     @Test
@@ -222,12 +289,15 @@ class DitDaViewModelTest {
                     vibrationEnabled = true,
                     highlightPlaybackEnabled = false,
                     trainingSetRepeatCount = TRAINING_SET_REPEAT_ENDLESS,
+                    randomizeTrainingSetOrder = false,
                     darkMode = false,
                     handsFreeEnabled = true,
                     wakePhraseRequired = false,
                     feedbackVerbose = true
                 ),
-                currentCharacters = listOf('K', 'M', 'U')
+                currentCharacters = listOf('K', 'M', 'U'),
+                textPlaybackInput = "CQ CQ DE F4ABC",
+                textPlaybackLoopEnabled = true
             )
         )
 
@@ -239,11 +309,16 @@ class DitDaViewModelTest {
         assertThat(loaded.settings.soundEnabled).isFalse()
         assertThat(loaded.settings.highlightPlaybackEnabled).isFalse()
         assertThat(loaded.settings.trainingSetRepeatCount).isEqualTo(TRAINING_SET_REPEAT_ENDLESS)
+        assertThat(loaded.settings.randomizeTrainingSetOrder).isFalse()
         assertThat(loaded.settings.handsFreeEnabled).isTrue()
         assertThat(loaded.settings.wakePhraseRequired).isFalse()
         assertThat(loaded.settings.feedbackVerbose).isTrue()
+        assertThat(loaded.textPlaybackInput).isEqualTo("CQ CQ DE F4ABC")
+        assertThat(loaded.textPlaybackLoopEnabled).isTrue()
 
         vm.updateCharacterWpm(25)
+        vm.updateTextPlaybackInput("VVV DE TEST")
+        vm.updateTextPlaybackLoopEnabled(false)
         vm.advanceToNextCharacter()
         vm.removeLatestCharacter()
 
@@ -251,6 +326,8 @@ class DitDaViewModelTest {
         assertThat(saved).isNotNull()
         assertThat(saved?.settings?.characterWpm).isEqualTo(25)
         assertThat(saved?.currentCharacters).containsExactly('K', 'M', 'U').inOrder()
+        assertThat(saved?.textPlaybackInput).isEqualTo("VVV DE TEST")
+        assertThat(saved?.textPlaybackLoopEnabled).isFalse()
     }
 }
 

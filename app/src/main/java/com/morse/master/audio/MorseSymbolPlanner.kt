@@ -35,7 +35,25 @@ class MorseSymbolPlanner {
         'W' to ".--",
         'X' to "-..-",
         'Y' to "-.--",
-        'Z' to "--.."
+        'Z' to "--..",
+        '1' to ".----",
+        '2' to "..---",
+        '3' to "...--",
+        '4' to "....-",
+        '5' to ".....",
+        '6' to "-....",
+        '7' to "--...",
+        '8' to "---..",
+        '9' to "----.",
+        '0' to "-----",
+        '.' to ".-.-.-",
+        ',' to "--..--",
+        '?' to "..--..",
+        '/' to "-..-.",
+        '=' to "-...-",
+        '+' to ".-.-.",
+        '-' to "-....-",
+        '@' to ".--.-."
     )
 
     fun planFor(character: Char, settings: DitDaSettings): List<MorseSegment> {

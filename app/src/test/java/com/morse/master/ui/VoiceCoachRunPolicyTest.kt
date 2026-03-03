@@ -51,4 +51,66 @@ class VoiceCoachRunPolicyTest {
             )
         ).isFalse()
     }
+
+    @Test
+    fun `keeps screen awake during playback on any tab and for active coach on practice`() {
+        assertThat(
+            shouldKeepScreenAwake(
+                activeTab = AppTab.PRACTICE,
+                isPlaying = true,
+                coachState = CoachState.IDLE
+            )
+        ).isTrue()
+
+        assertThat(
+            shouldKeepScreenAwake(
+                activeTab = AppTab.PRACTICE,
+                isPlaying = false,
+                coachState = CoachState.ROUND_ACTIVE
+            )
+        ).isTrue()
+
+        assertThat(
+            shouldKeepScreenAwake(
+                activeTab = AppTab.PRACTICE,
+                isPlaying = false,
+                coachState = CoachState.STOPPED
+            )
+        ).isFalse()
+
+        assertThat(
+            shouldKeepScreenAwake(
+                activeTab = AppTab.SETTINGS,
+                isPlaying = true,
+                coachState = CoachState.ROUND_ACTIVE
+            )
+        ).isTrue()
+    }
+
+    @Test
+    fun `holds partial wake lock when playback or practice coach session is active`() {
+        assertThat(
+            shouldHoldPartialWakeLock(
+                activeTab = AppTab.TEXT,
+                isPlaying = true,
+                coachState = CoachState.IDLE
+            )
+        ).isTrue()
+
+        assertThat(
+            shouldHoldPartialWakeLock(
+                activeTab = AppTab.PRACTICE,
+                isPlaying = false,
+                coachState = CoachState.ROUND_ACTIVE
+            )
+        ).isTrue()
+
+        assertThat(
+            shouldHoldPartialWakeLock(
+                activeTab = AppTab.SETTINGS,
+                isPlaying = false,
+                coachState = CoachState.ROUND_ACTIVE
+            )
+        ).isFalse()
+    }
 }

@@ -86,7 +86,39 @@ if [[ -z "$DEVICE_SERIAL" ]]; then
     echo "Error: no connected devices found." >&2
     exit 1
   fi
-  DEVICE_SERIAL="${DEVICES[0]}"
+
+  if [[ "${#DEVICES[@]}" -eq 1 ]]; then
+    DEVICE_SERIAL="${DEVICES[0]}"
+  else
+    BEST_SERIAL=""
+    BEST_SDK=-1
+    echo "Multiple devices detected. Selecting highest Android SDK:"
+    for serial in "${DEVICES[@]}"; do
+      sdk_raw="$("$ADB_BIN" -s "$serial" shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r' || true)"
+      model_raw="$("$ADB_BIN" -s "$serial" shell getprop ro.product.model 2>/dev/null | tr -d '\r' || true)"
+
+      sdk=-1
+      if [[ "$sdk_raw" =~ ^[0-9]+$ ]]; then
+        sdk="$sdk_raw"
+      fi
+      model="${model_raw:-unknown}"
+
+      printf "  - %s (model: %s, sdk: %s)\n" "$serial" "$model" "${sdk_raw:-unknown}"
+
+      if (( sdk > BEST_SDK )); then
+        BEST_SDK="$sdk"
+        BEST_SERIAL="$serial"
+      fi
+    done
+
+    if [[ -z "$BEST_SERIAL" || "$BEST_SDK" -lt 0 ]]; then
+      echo "Error: failed to auto-select a compatible device. Use --serial <device-serial>." >&2
+      exit 1
+    fi
+
+    DEVICE_SERIAL="$BEST_SERIAL"
+    echo "Auto-selected '$DEVICE_SERIAL' (sdk $BEST_SDK). Use --serial to override."
+  fi
 fi
 
 echo "Deploying '$APK_PATH' to device '$DEVICE_SERIAL'..."

@@ -4,7 +4,9 @@ import android.content.Context
 
 data class DitDaPersistedState(
     val settings: DitDaSettings = DitDaSettings(),
-    val currentCharacters: List<Char> = listOf('K', 'M')
+    val currentCharacters: List<Char> = listOf('K', 'M'),
+    val textPlaybackInput: String = "",
+    val textPlaybackLoopEnabled: Boolean = false
 )
 
 interface DitDaStateStore {
@@ -43,6 +45,10 @@ class SharedPrefsDitDaStateStore(
                 KEY_TRAINING_SET_REPEAT_COUNT,
                 DEFAULT_SETTINGS.trainingSetRepeatCount
             ),
+            randomizeTrainingSetOrder = prefs.getBoolean(
+                KEY_RANDOMIZE_TRAINING_SET_ORDER,
+                DEFAULT_SETTINGS.randomizeTrainingSetOrder
+            ),
             darkMode = prefs.getBoolean(KEY_DARK_MODE, DEFAULT_SETTINGS.darkMode),
             handsFreeEnabled = prefs.getBoolean(
                 KEY_HANDS_FREE_ENABLED,
@@ -61,7 +67,15 @@ class SharedPrefsDitDaStateStore(
             settings = settings,
             currentCharacters = parseCharacters(
                 prefs.getString(KEY_CURRENT_CHARACTERS, null)
-            ) ?: DEFAULT_CHARACTERS
+            ) ?: DEFAULT_CHARACTERS,
+            textPlaybackInput = prefs.getString(
+                KEY_TEXT_PLAYBACK_INPUT,
+                DEFAULT_TEXT_PLAYBACK_INPUT
+            ) ?: DEFAULT_TEXT_PLAYBACK_INPUT,
+            textPlaybackLoopEnabled = prefs.getBoolean(
+                KEY_TEXT_PLAYBACK_LOOP_ENABLED,
+                DEFAULT_TEXT_PLAYBACK_LOOP_ENABLED
+            )
         )
     }
 
@@ -74,11 +88,14 @@ class SharedPrefsDitDaStateStore(
             .putBoolean(KEY_VIBRATION_ENABLED, state.settings.vibrationEnabled)
             .putBoolean(KEY_HIGHLIGHT_PLAYBACK_ENABLED, state.settings.highlightPlaybackEnabled)
             .putInt(KEY_TRAINING_SET_REPEAT_COUNT, state.settings.trainingSetRepeatCount)
+            .putBoolean(KEY_RANDOMIZE_TRAINING_SET_ORDER, state.settings.randomizeTrainingSetOrder)
             .putBoolean(KEY_DARK_MODE, state.settings.darkMode)
             .putBoolean(KEY_HANDS_FREE_ENABLED, state.settings.handsFreeEnabled)
             .putBoolean(KEY_WAKE_PHRASE_REQUIRED, state.settings.wakePhraseRequired)
             .putBoolean(KEY_FEEDBACK_VERBOSE, state.settings.feedbackVerbose)
             .putString(KEY_CURRENT_CHARACTERS, state.currentCharacters.joinToString(separator = ","))
+            .putString(KEY_TEXT_PLAYBACK_INPUT, state.textPlaybackInput)
+            .putBoolean(KEY_TEXT_PLAYBACK_LOOP_ENABLED, state.textPlaybackLoopEnabled)
             .apply()
     }
 
@@ -103,13 +120,18 @@ class SharedPrefsDitDaStateStore(
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
         private const val KEY_HIGHLIGHT_PLAYBACK_ENABLED = "highlight_playback_enabled"
         private const val KEY_TRAINING_SET_REPEAT_COUNT = "training_set_repeat_count"
+        private const val KEY_RANDOMIZE_TRAINING_SET_ORDER = "randomize_training_set_order"
         private const val KEY_DARK_MODE = "dark_mode"
         private const val KEY_HANDS_FREE_ENABLED = "hands_free_enabled"
         private const val KEY_WAKE_PHRASE_REQUIRED = "wake_phrase_required"
         private const val KEY_FEEDBACK_VERBOSE = "feedback_verbose"
         private const val KEY_CURRENT_CHARACTERS = "current_characters"
+        private const val KEY_TEXT_PLAYBACK_INPUT = "text_playback_input"
+        private const val KEY_TEXT_PLAYBACK_LOOP_ENABLED = "text_playback_loop_enabled"
 
         private val DEFAULT_SETTINGS = DitDaSettings()
         private val DEFAULT_CHARACTERS = listOf('K', 'M')
+        private const val DEFAULT_TEXT_PLAYBACK_INPUT = ""
+        private const val DEFAULT_TEXT_PLAYBACK_LOOP_ENABLED = false
     }
 }
