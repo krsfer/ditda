@@ -13,6 +13,7 @@ data class VoiceCoachSessionState(
     val progressionFrozen: Boolean = false,
     val reinforceRoundsRemaining: Int = 0,
     val newCharacterInSession: Char? = null,
+    val characterWpm: Int = 30,
     val effectiveWpm: Int = 8,
     val lastRoundMetrics: VoiceRoundMetrics? = null
 )

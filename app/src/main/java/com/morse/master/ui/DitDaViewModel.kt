@@ -25,7 +25,7 @@ enum class AppTab {
 const val TRAINING_SET_REPEAT_ENDLESS = -1
 
 data class DitDaSettings(
-    val characterWpm: Int = 25,
+    val characterWpm: Int = 30,
     val effectiveWpm: Int = 8,
     val toneHz: Int = 600,
     val soundEnabled: Boolean = true,
@@ -36,7 +36,8 @@ data class DitDaSettings(
     val darkMode: Boolean = true,
     val handsFreeEnabled: Boolean = false,
     val wakePhraseRequired: Boolean = true,
-    val feedbackVerbose: Boolean = false
+    val feedbackVerbose: Boolean = false,
+    val ultraPhaseEnabled: Boolean = false
 )
 
 data class SpeedPreset(
@@ -45,9 +46,9 @@ data class SpeedPreset(
     val toneHz: Int
 )
 
-val Beginner30WpmPreset = SpeedPreset(
+val Expert30WpmPreset = SpeedPreset(
     characterWpm = 30,
-    effectiveWpm = 10,
+    effectiveWpm = 8,
     toneHz = 650
 )
 
@@ -90,6 +91,9 @@ class DitDaViewModel(
         private const val BASE_CURRICULUM_SIZE = 2
         private const val MIN_TRAINING_SET_REPEAT_COUNT = 0
         private const val MAX_TRAINING_SET_REPEAT_COUNT = 10
+        private const val MIN_CHARACTER_WPM = 10
+        private const val MAX_CHARACTER_WPM = 60
+        private const val MIN_EFFECTIVE_WPM = 5
     }
 
     private val _state = MutableStateFlow(loadInitialState())
@@ -100,6 +104,11 @@ class DitDaViewModel(
         coachCoordinator.setCurrentCharacters(_state.value.currentCharacters)
         coachCoordinator.setWakePhraseRequired(_state.value.settings.wakePhraseRequired)
         coachCoordinator.setFeedbackVerbose(_state.value.settings.feedbackVerbose)
+        coachCoordinator.setUltraPhaseEnabled(_state.value.settings.ultraPhaseEnabled)
+        coachCoordinator.setSpeedProfile(
+            characterWpm = _state.value.settings.characterWpm,
+            effectiveWpm = _state.value.settings.effectiveWpm
+        )
         syncCoachState(persist = false)
     }
 
@@ -108,11 +117,28 @@ class DitDaViewModel(
     }
 
     fun updateCharacterWpm(value: Int) {
-        updateAndPersist { it.copy(settings = it.settings.copy(characterWpm = value)) }
+        updateAndPersist {
+            val clampedCharacter = value.coerceIn(MIN_CHARACTER_WPM, MAX_CHARACTER_WPM)
+            val clampedEffective = it.settings.effectiveWpm.coerceAtMost(clampedCharacter)
+            val updatedSettings = it.settings.copy(
+                characterWpm = clampedCharacter,
+                effectiveWpm = clampedEffective
+            )
+            syncCoachSettings(updatedSettings)
+            it.copy(settings = updatedSettings)
+        }
     }
 
     fun updateEffectiveWpm(value: Int) {
-        updateAndPersist { it.copy(settings = it.settings.copy(effectiveWpm = value)) }
+        updateAndPersist {
+            val clampedEffective = value.coerceIn(
+                MIN_EFFECTIVE_WPM,
+                it.settings.characterWpm
+            )
+            val updatedSettings = it.settings.copy(effectiveWpm = clampedEffective)
+            syncCoachSettings(updatedSettings)
+            it.copy(settings = updatedSettings)
+        }
     }
 
     fun updateToneHz(value: Int) {
@@ -121,12 +147,15 @@ class DitDaViewModel(
 
     fun applyThirtyWpmBeginnerPreset() {
         updateAndPersist {
+            val updatedSettings = it.settings.copy(
+                characterWpm = Expert30WpmPreset.characterWpm,
+                effectiveWpm = Expert30WpmPreset.effectiveWpm,
+                toneHz = Expert30WpmPreset.toneHz,
+                ultraPhaseEnabled = false
+            )
+            syncCoachSettings(updatedSettings)
             it.copy(
-                settings = it.settings.copy(
-                    characterWpm = Beginner30WpmPreset.characterWpm,
-                    effectiveWpm = Beginner30WpmPreset.effectiveWpm,
-                    toneHz = Beginner30WpmPreset.toneHz
-                )
+                settings = updatedSettings
             )
         }
     }
@@ -175,6 +204,14 @@ class DitDaViewModel(
     fun updateFeedbackVerbose(enabled: Boolean) {
         updateAndPersist { it.copy(settings = it.settings.copy(feedbackVerbose = enabled)) }
         coachCoordinator.setFeedbackVerbose(enabled)
+    }
+
+    fun updateUltraPhaseEnabled(enabled: Boolean) {
+        updateAndPersist {
+            val updatedSettings = it.settings.copy(ultraPhaseEnabled = enabled)
+            syncCoachSettings(updatedSettings)
+            it.copy(settings = updatedSettings)
+        }
     }
 
     fun setPlaying(value: Boolean) {
@@ -356,7 +393,14 @@ class DitDaViewModel(
                 MAX_TRAINING_SET_REPEAT_COUNT
             )
         }
+        val normalizedCharacterWpm = settings.characterWpm.coerceIn(MIN_CHARACTER_WPM, MAX_CHARACTER_WPM)
+        val normalizedEffectiveWpm = settings.effectiveWpm.coerceIn(
+            MIN_EFFECTIVE_WPM,
+            normalizedCharacterWpm
+        )
         return settings.copy(
+            characterWpm = normalizedCharacterWpm,
+            effectiveWpm = normalizedEffectiveWpm,
             trainingSetRepeatCount = normalizedRepeatCount
         )
     }
@@ -364,6 +408,10 @@ class DitDaViewModel(
     private fun syncCoachState(persist: Boolean) {
         val coachState = coachCoordinator.state.value
         val updated = _state.value.copy(
+            settings = _state.value.settings.copy(
+                characterWpm = coachState.characterWpm,
+                effectiveWpm = coachState.effectiveWpm
+            ),
             currentCharacters = coachState.currentCharacters,
             nextCharacter = KochSequence.full().firstOrNull { it !in coachState.currentCharacters },
             coachState = coachState.coachState,
@@ -376,6 +424,14 @@ class DitDaViewModel(
         if (persist) {
             persistState(updated)
         }
+    }
+
+    private fun syncCoachSettings(settings: DitDaSettings) {
+        coachCoordinator.setUltraPhaseEnabled(settings.ultraPhaseEnabled)
+        coachCoordinator.setSpeedProfile(
+            characterWpm = settings.characterWpm,
+            effectiveWpm = settings.effectiveWpm
+        )
     }
 
     private fun updateState(updater: (DitDaUiState) -> DitDaUiState) {

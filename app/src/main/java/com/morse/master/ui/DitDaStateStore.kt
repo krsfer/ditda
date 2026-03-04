@@ -61,6 +61,10 @@ class SharedPrefsDitDaStateStore(
             feedbackVerbose = prefs.getBoolean(
                 KEY_FEEDBACK_VERBOSE,
                 DEFAULT_SETTINGS.feedbackVerbose
+            ),
+            ultraPhaseEnabled = prefs.getBoolean(
+                KEY_ULTRA_PHASE_ENABLED,
+                DEFAULT_SETTINGS.ultraPhaseEnabled
             )
         )
         return DitDaPersistedState(
@@ -93,6 +97,7 @@ class SharedPrefsDitDaStateStore(
             .putBoolean(KEY_HANDS_FREE_ENABLED, state.settings.handsFreeEnabled)
             .putBoolean(KEY_WAKE_PHRASE_REQUIRED, state.settings.wakePhraseRequired)
             .putBoolean(KEY_FEEDBACK_VERBOSE, state.settings.feedbackVerbose)
+            .putBoolean(KEY_ULTRA_PHASE_ENABLED, state.settings.ultraPhaseEnabled)
             .putString(KEY_CURRENT_CHARACTERS, state.currentCharacters.joinToString(separator = ","))
             .putString(KEY_TEXT_PLAYBACK_INPUT, state.textPlaybackInput)
             .putBoolean(KEY_TEXT_PLAYBACK_LOOP_ENABLED, state.textPlaybackLoopEnabled)
@@ -125,6 +130,7 @@ class SharedPrefsDitDaStateStore(
         private const val KEY_HANDS_FREE_ENABLED = "hands_free_enabled"
         private const val KEY_WAKE_PHRASE_REQUIRED = "wake_phrase_required"
         private const val KEY_FEEDBACK_VERBOSE = "feedback_verbose"
+        private const val KEY_ULTRA_PHASE_ENABLED = "ultra_phase_enabled"
         private const val KEY_CURRENT_CHARACTERS = "current_characters"
         private const val KEY_TEXT_PLAYBACK_INPUT = "text_playback_input"
         private const val KEY_TEXT_PLAYBACK_LOOP_ENABLED = "text_playback_loop_enabled"

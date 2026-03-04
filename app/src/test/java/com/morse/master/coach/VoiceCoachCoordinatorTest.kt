@@ -172,6 +172,98 @@ class VoiceCoachCoordinatorTest {
     }
 
     @Test
+    fun `keeps learning phase at 30 slash 8 while fewer than 26 letters are unlocked`() {
+        val coordinator = buildCoordinator(
+            settings = VoiceCoachSettings(
+                sessionDurationMs = 100_000L,
+                maxSessionExpansions = 0
+            )
+        )
+
+        coordinator.setCurrentCharacters(listOf('K', 'M', 'U'))
+        coordinator.setSpeedProfile(characterWpm = 36, effectiveWpm = 15)
+        coordinator.handleCommand(CoachVoiceCommand.START_SESSION, nowMs = 0L)
+        coordinator.onRoundCompleted(stableAttempts(), nowMs = 100L)
+
+        assertThat(coordinator.state.value.characterWpm).isEqualTo(30)
+        assertThat(coordinator.state.value.effectiveWpm).isEqualTo(8)
+    }
+
+    @Test
+    fun `starts closing phase after alphabet is unlocked by increasing effective wpm`() {
+        val coordinator = buildCoordinator(
+            settings = VoiceCoachSettings(
+                sessionDurationMs = 100_000L,
+                maxSessionExpansions = 0
+            )
+        )
+
+        coordinator.setCurrentCharacters(('A'..'Z').toList())
+        coordinator.setSpeedProfile(characterWpm = 30, effectiveWpm = 8)
+        coordinator.handleCommand(CoachVoiceCommand.START_SESSION, nowMs = 0L)
+        coordinator.onRoundCompleted(stableAttempts(), nowMs = 100L)
+
+        assertThat(coordinator.state.value.characterWpm).isEqualTo(30)
+        assertThat(coordinator.state.value.effectiveWpm).isEqualTo(9)
+    }
+
+    @Test
+    fun `reaches mastery at 30 slash 30 after closing phase`() {
+        val coordinator = buildCoordinator(
+            settings = VoiceCoachSettings(
+                sessionDurationMs = 100_000L,
+                maxSessionExpansions = 0
+            )
+        )
+
+        coordinator.setCurrentCharacters(('A'..'Z').toList())
+        coordinator.setSpeedProfile(characterWpm = 30, effectiveWpm = 29)
+        coordinator.handleCommand(CoachVoiceCommand.START_SESSION, nowMs = 0L)
+        coordinator.onRoundCompleted(stableAttempts(), nowMs = 100L)
+
+        assertThat(coordinator.state.value.characterWpm).isEqualTo(30)
+        assertThat(coordinator.state.value.effectiveWpm).isEqualTo(30)
+    }
+
+    @Test
+    fun `ramps both speeds together in ultra mode when enabled`() {
+        val coordinator = buildCoordinator(
+            settings = VoiceCoachSettings(
+                sessionDurationMs = 100_000L,
+                maxSessionExpansions = 0
+            )
+        )
+
+        coordinator.setCurrentCharacters(('A'..'Z').toList())
+        coordinator.setUltraPhaseEnabled(true)
+        coordinator.setSpeedProfile(characterWpm = 39, effectiveWpm = 39)
+        coordinator.handleCommand(CoachVoiceCommand.START_SESSION, nowMs = 0L)
+        coordinator.onRoundCompleted(stableAttempts(), nowMs = 100L)
+
+        assertThat(coordinator.state.value.characterWpm).isEqualTo(40)
+        assertThat(coordinator.state.value.effectiveWpm).isEqualTo(40)
+    }
+
+    @Test
+    fun `keeps 30 slash 30 mastery speed when ultra mode is disabled`() {
+        val coordinator = buildCoordinator(
+            settings = VoiceCoachSettings(
+                sessionDurationMs = 100_000L,
+                maxSessionExpansions = 0
+            )
+        )
+
+        coordinator.setCurrentCharacters(('A'..'Z').toList())
+        coordinator.setUltraPhaseEnabled(false)
+        coordinator.setSpeedProfile(characterWpm = 30, effectiveWpm = 30)
+        coordinator.handleCommand(CoachVoiceCommand.START_SESSION, nowMs = 0L)
+        coordinator.onRoundCompleted(stableAttempts(), nowMs = 100L)
+
+        assertThat(coordinator.state.value.characterWpm).isEqualTo(30)
+        assertThat(coordinator.state.value.effectiveWpm).isEqualTo(30)
+    }
+
+    @Test
     fun `poll voice command can start session from microphone transcript`() = runTest {
         val coordinator = buildCoordinator(
             speechGateway = QueueSpeechRecognizerGateway(

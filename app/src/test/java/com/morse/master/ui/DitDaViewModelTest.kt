@@ -32,8 +32,8 @@ class DitDaViewModelTest {
             vm.selectTab(AppTab.SETTINGS)
             assertThat(awaitItem().activeTab).isEqualTo(AppTab.SETTINGS)
 
-            vm.updateCharacterWpm(30)
-            assertThat(awaitItem().settings.characterWpm).isEqualTo(30)
+            vm.updateCharacterWpm(32)
+            assertThat(awaitItem().settings.characterWpm).isEqualTo(32)
 
             vm.updateEffectiveWpm(12)
             assertThat(awaitItem().settings.effectiveWpm).isEqualTo(12)
@@ -83,7 +83,7 @@ class DitDaViewModelTest {
     }
 
     @Test
-    fun `applies 30 WPM beginner preset and persists it`() {
+    fun `applies 30 WPM expert preset and persists it`() {
         val store = FakeDitDaStateStore(loadedState = DitDaPersistedState())
         val vm = DitDaViewModel(stateStore = store)
 
@@ -95,13 +95,13 @@ class DitDaViewModelTest {
 
         val settings = vm.state.value.settings
         assertThat(settings.characterWpm).isEqualTo(30)
-        assertThat(settings.effectiveWpm).isEqualTo(10)
+        assertThat(settings.effectiveWpm).isEqualTo(8)
         assertThat(settings.toneHz).isEqualTo(650)
 
         val saved = store.lastSaved
         assertThat(saved).isNotNull()
         assertThat(saved?.settings?.characterWpm).isEqualTo(30)
-        assertThat(saved?.settings?.effectiveWpm).isEqualTo(10)
+        assertThat(saved?.settings?.effectiveWpm).isEqualTo(8)
         assertThat(saved?.settings?.toneHz).isEqualTo(650)
     }
 

@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.math.min
 
 class VoiceCoachCoordinator(
     private val commandParser: CommandParser,
@@ -28,6 +29,7 @@ class VoiceCoachCoordinator(
     private val _state = MutableStateFlow(
         VoiceCoachSessionState(
             currentCharacters = listOf('K', 'M'),
+            characterWpm = settings.characterWpm,
             effectiveWpm = settings.effectiveWpm
         )
     )
@@ -36,6 +38,7 @@ class VoiceCoachCoordinator(
     private var sessionStartMs: Long? = null
     private var wakePhraseRequired: Boolean = settings.wakePhraseRequired
     private var feedbackVerbose: Boolean = settings.feedbackVerbose
+    private var ultraPhaseEnabled: Boolean = settings.ultraPhaseEnabled
 
     fun setCurrentCharacters(characters: List<Char>) {
         val normalized = characters
@@ -55,6 +58,22 @@ class VoiceCoachCoordinator(
 
     fun setFeedbackVerbose(verbose: Boolean) {
         feedbackVerbose = verbose
+    }
+
+    fun setUltraPhaseEnabled(enabled: Boolean) {
+        ultraPhaseEnabled = enabled
+    }
+
+    fun setSpeedProfile(characterWpm: Int, effectiveWpm: Int) {
+        val normalizedCharacter = characterWpm.coerceIn(settings.minCharacterWpm, settings.maxCharacterWpm)
+        val normalizedEffective = effectiveWpm.coerceIn(
+            settings.minEffectiveWpm,
+            min(normalizedCharacter, settings.maxEffectiveWpm)
+        )
+        _state.value = _state.value.copy(
+            characterWpm = normalizedCharacter,
+            effectiveWpm = normalizedEffective
+        )
     }
 
     fun handleTranscript(transcript: String, nowMs: Long = nowProvider()) {
@@ -210,6 +229,7 @@ class VoiceCoachCoordinator(
         var reinforceRoundsRemaining = previous.reinforceRoundsRemaining
         var progressionFrozen = previous.progressionFrozen
         var newCharacterInSession = previous.newCharacterInSession
+        var characterWpm = previous.characterWpm
         var effectiveWpm = previous.effectiveWpm
 
         when (decision) {
@@ -242,6 +262,15 @@ class VoiceCoachCoordinator(
             CoachDecision.KEEP_LIST -> Unit
         }
 
+        val (progressedCharacterWpm, progressedEffectiveWpm) = applyExpertPathProgression(
+            stable = stable,
+            unlockedCharacters = updatedCharacters,
+            characterWpm = characterWpm,
+            effectiveWpm = effectiveWpm
+        )
+        characterWpm = progressedCharacterWpm
+        effectiveWpm = progressedEffectiveWpm
+
         val elapsed = (sessionStartMs?.let { (nowMs - it).coerceAtLeast(0L) } ?: previous.sessionElapsedMs)
         val nextState = if (elapsed >= settings.sessionDurationMs) {
             CoachState.BREAK_PROMPT
@@ -260,6 +289,7 @@ class VoiceCoachCoordinator(
             progressionFrozen = progressionFrozen,
             reinforceRoundsRemaining = reinforceRoundsRemaining,
             newCharacterInSession = newCharacterInSession,
+            characterWpm = characterWpm,
             effectiveWpm = effectiveWpm,
             lastRoundMetrics = roundMetrics
         )
@@ -267,6 +297,13 @@ class VoiceCoachCoordinator(
 
     private fun startSession(nowMs: Long) {
         sessionStartMs = nowMs
+        val previous = _state.value
+        val (startingCharacterWpm, startingEffectiveWpm) = applyExpertPathProgression(
+            stable = false,
+            unlockedCharacters = previous.currentCharacters,
+            characterWpm = previous.characterWpm,
+            effectiveWpm = previous.effectiveWpm
+        )
         _state.value = _state.value.copy(
             coachState = CoachState.ROUND_ACTIVE,
             roundIndex = 0,
@@ -279,7 +316,8 @@ class VoiceCoachCoordinator(
             progressionFrozen = false,
             reinforceRoundsRemaining = 0,
             newCharacterInSession = null,
-            effectiveWpm = settings.effectiveWpm
+            characterWpm = startingCharacterWpm,
+            effectiveWpm = startingEffectiveWpm
         )
         narration.speak("Session started")
     }
@@ -329,16 +367,69 @@ class VoiceCoachCoordinator(
     }
 
     private fun lowerSpeed() {
+        val current = _state.value
         _state.value = _state.value.copy(
-            effectiveWpm = (_state.value.effectiveWpm - 1).coerceAtLeast(settings.minEffectiveWpm)
+            effectiveWpm = (current.effectiveWpm - 1).coerceAtLeast(settings.minEffectiveWpm)
         )
         narration.speak("Slower")
     }
 
     private fun raiseSpeed() {
+        val current = _state.value
         _state.value = _state.value.copy(
-            effectiveWpm = (_state.value.effectiveWpm + 1).coerceAtMost(settings.characterWpm)
+            effectiveWpm = (current.effectiveWpm + 1).coerceAtMost(
+                min(current.characterWpm, settings.maxEffectiveWpm)
+            )
         )
         narration.speak("Faster")
+    }
+
+    private fun applyExpertPathProgression(
+        stable: Boolean,
+        unlockedCharacters: List<Char>,
+        characterWpm: Int,
+        effectiveWpm: Int
+    ): Pair<Int, Int> {
+        val unlockedGestaltLetters = unlockedCharacters
+            .map { it.uppercaseChar() }
+            .distinct()
+            .count { it in 'A'..'Z' }
+
+        if (unlockedGestaltLetters < settings.gestaltLettersRequired) {
+            return settings.learningCharacterWpm to settings.learningEffectiveWpm
+        }
+
+        var normalizedCharacter = characterWpm.coerceIn(
+            settings.learningCharacterWpm,
+            settings.maxCharacterWpm
+        )
+        var normalizedEffective = effectiveWpm.coerceIn(
+            settings.learningEffectiveWpm,
+            min(normalizedCharacter, settings.maxEffectiveWpm)
+        )
+
+        if (!stable) {
+            return normalizedCharacter to normalizedEffective
+        }
+
+        if (normalizedCharacter <= settings.masteryCharacterWpm &&
+            normalizedEffective < settings.masteryEffectiveWpm
+        ) {
+            normalizedCharacter = settings.masteryCharacterWpm
+            normalizedEffective = (normalizedEffective + 1).coerceAtMost(settings.masteryEffectiveWpm)
+            return normalizedCharacter to normalizedEffective
+        }
+
+        if (ultraPhaseEnabled &&
+            normalizedCharacter >= settings.masteryCharacterWpm &&
+            normalizedEffective >= settings.masteryEffectiveWpm
+        ) {
+            normalizedCharacter = (normalizedCharacter + 1).coerceAtMost(settings.maxCharacterWpm)
+            normalizedEffective = (normalizedEffective + 1).coerceAtMost(
+                min(normalizedCharacter, settings.maxEffectiveWpm)
+            )
+        }
+
+        return normalizedCharacter to normalizedEffective
     }
 }

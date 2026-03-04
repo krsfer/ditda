@@ -166,7 +166,8 @@ internal fun highlightedTextPlaybackPreview(
 ): AnnotatedString {
     return buildAnnotatedString {
         append(normalizedInput)
-        val playedEnd = (highlightedIndex ?: playedUpTo).coerceIn(0, normalizedInput.length)
+        val rawPlayedEnd = highlightedIndex?.let { minOf(playedUpTo, it) } ?: playedUpTo
+        val playedEnd = rawPlayedEnd.coerceIn(0, normalizedInput.length)
         for (i in 0 until playedEnd) {
             if (normalizedInput[i] != ' ') {
                 addStyle(SpanStyle(background = playedColor), i, i + 1)
@@ -232,10 +233,45 @@ internal fun shouldHoldPartialWakeLock(
     return activeTab == AppTab.PRACTICE && coachSessionActive
 }
 
-internal fun isThirtyWpmBeginnerPresetActive(settings: DitDaSettings): Boolean {
-    return settings.characterWpm == Beginner30WpmPreset.characterWpm &&
-        settings.effectiveWpm == Beginner30WpmPreset.effectiveWpm &&
-        settings.toneHz == Beginner30WpmPreset.toneHz
+internal enum class ExpertPathPhase {
+    LEARNING,
+    CLOSING,
+    MASTERY,
+    ULTRA,
+    CUSTOM
+}
+
+internal fun isThirtyWpmExpertPresetActive(settings: DitDaSettings): Boolean {
+    return settings.characterWpm == Expert30WpmPreset.characterWpm &&
+        settings.effectiveWpm == Expert30WpmPreset.effectiveWpm &&
+        settings.toneHz == Expert30WpmPreset.toneHz
+}
+
+internal fun expertPathPhase(settings: DitDaSettings): ExpertPathPhase {
+    return when {
+        settings.characterWpm == 30 && settings.effectiveWpm == 8 -> ExpertPathPhase.LEARNING
+        settings.characterWpm == 30 && settings.effectiveWpm in 9..29 -> ExpertPathPhase.CLOSING
+        settings.characterWpm == settings.effectiveWpm && settings.characterWpm >= 40 -> ExpertPathPhase.ULTRA
+        settings.characterWpm == settings.effectiveWpm && settings.characterWpm >= 30 -> ExpertPathPhase.MASTERY
+        else -> ExpertPathPhase.CUSTOM
+    }
+}
+
+private fun expertPathPhaseSummary(phase: ExpertPathPhase): String {
+    return when (phase) {
+        ExpertPathPhase.LEARNING -> "Learning Phase (30/8)"
+        ExpertPathPhase.CLOSING -> "Closing Phase (30/9 -> 30/29)"
+        ExpertPathPhase.MASTERY -> "Mastery Phase (30/30)"
+        ExpertPathPhase.ULTRA -> "Ultra Phase (40/40+)"
+        ExpertPathPhase.CUSTOM -> "Custom Speed Profile"
+    }
+}
+
+private fun gestaltLettersUnlocked(characters: List<Char>): Int {
+    return characters
+        .map { it.uppercaseChar() }
+        .distinct()
+        .count { it in 'A'..'Z' }
 }
 
 @Composable
@@ -694,6 +730,7 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
 
                     AppTab.SETTINGS -> SettingsScreen(
                         settings = state.settings,
+                        currentCharacters = state.currentCharacters,
                         modifier = Modifier.fillMaxSize(),
                         onApplyThirtyWpmBeginnerPreset = viewModel::applyThirtyWpmBeginnerPreset,
                         onCharacterWpmChange = viewModel::updateCharacterWpm,
@@ -707,7 +744,8 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                         onDarkModeChange = viewModel::updateDarkMode,
                         onHandsFreeEnabledChange = viewModel::updateHandsFreeEnabled,
                         onWakePhraseRequiredChange = viewModel::updateWakePhraseRequired,
-                        onFeedbackVerboseChange = viewModel::updateFeedbackVerbose
+                        onFeedbackVerboseChange = viewModel::updateFeedbackVerbose,
+                        onUltraPhaseEnabledChange = viewModel::updateUltraPhaseEnabled
                     )
                 }
             }
@@ -863,6 +901,7 @@ private fun TextPlaybackScreen(
 @Composable
 private fun SettingsScreen(
     settings: DitDaSettings,
+    currentCharacters: List<Char>,
     modifier: Modifier = Modifier,
     onApplyThirtyWpmBeginnerPreset: () -> Unit,
     onCharacterWpmChange: (Int) -> Unit,
@@ -876,9 +915,12 @@ private fun SettingsScreen(
     onDarkModeChange: (Boolean) -> Unit,
     onHandsFreeEnabledChange: (Boolean) -> Unit,
     onWakePhraseRequiredChange: (Boolean) -> Unit,
-    onFeedbackVerboseChange: (Boolean) -> Unit
+    onFeedbackVerboseChange: (Boolean) -> Unit,
+    onUltraPhaseEnabledChange: (Boolean) -> Unit
 ) {
-    val presetActive = isThirtyWpmBeginnerPresetActive(settings)
+    val presetActive = isThirtyWpmExpertPresetActive(settings)
+    val phase = expertPathPhase(settings)
+    val unlockedGestalts = gestaltLettersUnlocked(currentCharacters)
 
     Column(
         modifier = modifier
@@ -891,30 +933,44 @@ private fun SettingsScreen(
             modifier = Modifier.fillMaxWidth(),
             onClick = onApplyThirtyWpmBeginnerPreset
         ) {
-            Text("Apply 30 WPM Beginner Preset")
+            Text("Apply 30/8 Expert Path Preset")
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("30 WPM Beginner Preset")
+            Text("30 WPM Expert Path")
             Text(if (presetActive) "ACTIVE" else "CUSTOM")
         }
-        Text("30/10 WPM, 650 Hz, tuned for 5ms ramps at higher speed.")
+        Text("Learning 30/8 -> Closing 30/9..29 -> Mastery 30/30 -> Ultra 40/40+")
+        Text("Current phase: ${expertPathPhaseSummary(phase)}")
+        Text("Gestalts unlocked: $unlockedGestalts / 26")
 
         Text("Character Speed: ${settings.characterWpm} WPM")
         Slider(
             value = settings.characterWpm.toFloat(),
             onValueChange = { onCharacterWpmChange(it.roundToInt()) },
-            valueRange = 10f..45f
+            valueRange = 10f..60f
         )
 
         Text("Effective Speed (Gap): ${settings.effectiveWpm} WPM")
         Slider(
             value = settings.effectiveWpm.toFloat(),
             onValueChange = { onEffectiveWpmChange(it.roundToInt()) },
-            valueRange = 5f..20f
+            valueRange = 5f..settings.characterWpm.toFloat()
         )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Enable Ultra Phase Auto-Ramp")
+            Switch(
+                checked = settings.ultraPhaseEnabled,
+                onCheckedChange = onUltraPhaseEnabledChange
+            )
+        }
 
         Text("Tone: ${settings.toneHz} Hz")
         Slider(
