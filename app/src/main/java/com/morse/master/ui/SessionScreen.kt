@@ -26,7 +26,9 @@ import kotlin.math.roundToInt
 
 internal data class CharacterButtonVisualState(
     val enabled: Boolean,
-    val isHighlighted: Boolean
+    val isHighlighted: Boolean,
+    val isProblem: Boolean,
+    val isEasy: Boolean
 )
 
 internal data class TrainingSetProgressBarState(
@@ -41,27 +43,35 @@ internal fun isCoachSessionInProgress(coachState: CoachState): Boolean {
     return coachState != CoachState.IDLE && coachState != CoachState.STOPPED
 }
 
-internal fun isManualCharacterInputEnabled(isPlaying: Boolean, coachState: CoachState): Boolean {
-    return !isPlaying && !isCoachSessionInProgress(coachState)
+internal fun isManualCharacterInputEnabled(playbackMode: PlaybackMode, coachState: CoachState): Boolean {
+    return !isCoachSessionInProgress(coachState) &&
+        (playbackMode == PlaybackMode.IDLE || playbackMode == PlaybackMode.TRAINING_SET)
 }
 
-internal fun isPlayTrainingSetEnabled(isPlaying: Boolean, coachState: CoachState): Boolean {
-    return isPlaying || !isCoachSessionInProgress(coachState)
+internal fun isPlayTrainingSetEnabled(playbackMode: PlaybackMode, coachState: CoachState): Boolean {
+    return playbackMode == PlaybackMode.TRAINING_SET ||
+        (playbackMode == PlaybackMode.IDLE && !isCoachSessionInProgress(coachState))
 }
 
-internal fun isCoachStartEnabled(coachState: CoachState, isPlaying: Boolean): Boolean {
-    return !isPlaying && (coachState == CoachState.IDLE || coachState == CoachState.STOPPED)
+internal fun isCoachStartEnabled(coachState: CoachState, playbackMode: PlaybackMode): Boolean {
+    return playbackMode == PlaybackMode.IDLE &&
+        (coachState == CoachState.IDLE || coachState == CoachState.STOPPED)
 }
 
 internal fun characterButtonVisualState(
-    isPlaying: Boolean,
+    playbackMode: PlaybackMode,
     character: Char,
     highlightedCharacter: Char?,
+    problemCharacters: Set<Char> = emptySet(),
+    easyCharacters: Set<Char> = emptySet(),
     coachState: CoachState = CoachState.IDLE
 ): CharacterButtonVisualState {
+    val highlighted = character == highlightedCharacter
     return CharacterButtonVisualState(
-        enabled = isManualCharacterInputEnabled(isPlaying, coachState),
-        isHighlighted = character == highlightedCharacter
+        enabled = isManualCharacterInputEnabled(playbackMode, coachState),
+        isHighlighted = highlighted,
+        isProblem = !highlighted && character in problemCharacters,
+        isEasy = !highlighted && character in easyCharacters
     )
 }
 
@@ -78,17 +88,17 @@ internal fun characterGridRows(characters: List<Char>, columns: Int = CHARACTER_
 }
 
 internal fun playbackIterationCounterText(
-    isPlaying: Boolean,
+    playbackMode: PlaybackMode,
     currentIteration: Int,
     repeatCount: Int
 ): String {
     val progressState = trainingSetProgressBarState(
-        isPlaying = isPlaying,
+        playbackMode = playbackMode,
         currentIteration = currentIteration,
         repeatCount = repeatCount
     )
     val maxIterations = totalTrainingSetIterations(repeatCount)
-    val displayCurrent = if (isPlaying) currentIteration.coerceAtLeast(1) else 0
+    val displayCurrent = if (playbackMode == PlaybackMode.TRAINING_SET) currentIteration.coerceAtLeast(1) else 0
     return if (maxIterations == null) {
         "Training Sets: $displayCurrent / Endless (${progressState.percentage}%)"
     } else {
@@ -97,11 +107,11 @@ internal fun playbackIterationCounterText(
 }
 
 internal fun trainingSetProgressBarState(
-    isPlaying: Boolean,
+    playbackMode: PlaybackMode,
     currentIteration: Int,
     repeatCount: Int
 ): TrainingSetProgressBarState {
-    val displayCurrent = if (isPlaying) currentIteration.coerceAtLeast(1) else 0
+    val displayCurrent = if (playbackMode == PlaybackMode.TRAINING_SET) currentIteration.coerceAtLeast(1) else 0
     val maxIterations = totalTrainingSetIterations(repeatCount)
     val progress = if (maxIterations == null) {
         displayCurrent.coerceIn(0, 100).toFloat() / 100f
@@ -153,9 +163,11 @@ fun SessionScreen(
     maxTrainingLevels: Int = 25,
     settings: DitDaSettings = DitDaSettings(),
     nextCharacter: Char? = null,
-    isPlaying: Boolean = false,
+    playbackMode: PlaybackMode = PlaybackMode.IDLE,
     currentIteration: Int = 0,
     highlightedCharacter: Char? = null,
+    problemCharacters: Set<Char> = emptySet(),
+    easyCharacters: Set<Char> = emptySet(),
     coachState: CoachState = CoachState.IDLE,
     sessionElapsedMs: Long = 0L,
     lastCoachMessage: String? = null,
@@ -170,12 +182,14 @@ fun SessionScreen(
     onCoachResume: () -> Unit = {},
     onCoachStop: () -> Unit = {}
 ) {
+    val isTrainingSetPlaying = playbackMode == PlaybackMode.TRAINING_SET
+    val isAnyPlaybackActive = playbackMode != PlaybackMode.IDLE
     val removableCharacter = latestRemovableCharacter(characters)
     val progressBarState = trainingLevelProgressBarState(
         currentTrainingLevels = characters.size,
         maxTrainingLevels = maxTrainingLevels
     )
-    val playTrainingSetButtonColors = if (isPlaying) {
+    val playTrainingSetButtonColors = if (isTrainingSetPlaying) {
         ButtonDefaults.buttonColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
             contentColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -209,7 +223,7 @@ fun SessionScreen(
             )
             Text(
                 playbackIterationCounterText(
-                    isPlaying = isPlaying,
+                    playbackMode = playbackMode,
                     currentIteration = currentIteration,
                     repeatCount = settings.trainingSetRepeatCount
                 )
@@ -237,11 +251,25 @@ fun SessionScreen(
                 ) {
                     row.forEach { char ->
                         val buttonState = characterButtonVisualState(
-                            isPlaying = isPlaying,
+                            playbackMode = playbackMode,
                             character = char,
                             highlightedCharacter = highlightedCharacter,
+                            problemCharacters = problemCharacters,
+                            easyCharacters = easyCharacters,
                             coachState = coachState
                         )
+                        val containerColor = when {
+                            buttonState.isHighlighted -> MaterialTheme.colorScheme.primaryContainer
+                            buttonState.isProblem -> MaterialTheme.colorScheme.errorContainer
+                            buttonState.isEasy -> MaterialTheme.colorScheme.tertiaryContainer
+                            else -> Color.Transparent
+                        }
+                        val contentColor = when {
+                            buttonState.isHighlighted -> MaterialTheme.colorScheme.onPrimaryContainer
+                            buttonState.isProblem -> MaterialTheme.colorScheme.onErrorContainer
+                            buttonState.isEasy -> MaterialTheme.colorScheme.onTertiaryContainer
+                            else -> MaterialTheme.colorScheme.onSurface
+                        }
                         OutlinedButton(
                             onClick = {
                                 if (buttonState.enabled) {
@@ -251,16 +279,8 @@ fun SessionScreen(
                             enabled = buttonState.enabled,
                             modifier = Modifier.padding(horizontal = 4.dp),
                             colors = ButtonDefaults.outlinedButtonColors(
-                                containerColor = if (buttonState.isHighlighted) {
-                                    MaterialTheme.colorScheme.primaryContainer
-                                } else {
-                                    Color.Transparent
-                                },
-                                contentColor = if (buttonState.isHighlighted) {
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                }
+                                containerColor = containerColor,
+                                contentColor = contentColor
                             )
                         ) {
                             Text(char.toString())
@@ -279,7 +299,7 @@ fun SessionScreen(
         ) {
             Button(
                 onClick = onPlaySetPressed,
-                enabled = isPlayTrainingSetEnabled(isPlaying, coachState),
+                enabled = isPlayTrainingSetEnabled(playbackMode, coachState),
                 colors = playTrainingSetButtonColors
             ) {
                 Text("Play Training Set")
@@ -287,7 +307,9 @@ fun SessionScreen(
 
             Button(
                 onClick = onAdvancePressed,
-                enabled = !isCoachSessionInProgress(coachState) && !isPlaying && nextCharacter != null
+                enabled = !isCoachSessionInProgress(coachState) &&
+                    !isAnyPlaybackActive &&
+                    nextCharacter != null
             ) {
                 val label = nextCharacter?.let { "Add Next Character ($it)" } ?: "Curriculum Complete"
                 Text(label)
@@ -295,7 +317,9 @@ fun SessionScreen(
 
             Button(
                 onClick = onRemovePressed,
-                enabled = !isCoachSessionInProgress(coachState) && !isPlaying && removableCharacter != null
+                enabled = !isCoachSessionInProgress(coachState) &&
+                    !isAnyPlaybackActive &&
+                    removableCharacter != null
             ) {
                 val label = removableCharacter?.let { "Remove Latest Character ($it)" } ?: "Remove Latest Character"
                 Text(label)
@@ -308,7 +332,10 @@ fun SessionScreen(
                 ) {
                     Button(
                         onClick = onCoachStart,
-                        enabled = isCoachStartEnabled(coachState = coachState, isPlaying = isPlaying)
+                        enabled = isCoachStartEnabled(
+                            coachState = coachState,
+                            playbackMode = playbackMode
+                        )
                     ) {
                         Text("Start Coach")
                     }

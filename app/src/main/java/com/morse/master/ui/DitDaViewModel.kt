@@ -1,6 +1,9 @@
 package com.morse.master.ui
 
+import com.morse.master.ai.CommandType
 import com.morse.master.ai.CoachDecisionEngine
+import com.morse.master.ai.CurriculumCommand
+import com.morse.master.ai.CurriculumDecisionEngine
 import com.morse.master.coach.CoachState
 import com.morse.master.coach.CoachVoiceCommand
 import com.morse.master.coach.CommandParser
@@ -12,6 +15,8 @@ import com.morse.master.coach.VoiceAttempt
 import com.morse.master.coach.VoiceCoachCoordinator
 import com.morse.master.coach.VoiceCoachSettings
 import com.morse.master.domain.KochSequence
+import com.morse.master.session.TrainingSetPerformanceSnapshot
+import com.morse.master.session.TrainingSetPerformanceTracker
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,6 +25,13 @@ enum class AppTab {
     PRACTICE,
     TEXT,
     SETTINGS
+}
+
+enum class PlaybackMode {
+    IDLE,
+    SINGLE_CHAR,
+    TRAINING_SET,
+    TEXT
 }
 
 const val TRAINING_SET_REPEAT_ENDLESS = -1
@@ -57,9 +69,12 @@ data class DitDaUiState(
     val settings: DitDaSettings = DitDaSettings(),
     val currentCharacters: List<Char> = listOf('K', 'M'),
     val nextCharacter: Char? = 'U',
+    val playbackMode: PlaybackMode = PlaybackMode.IDLE,
     val isPlaying: Boolean = false,
     val currentIteration: Int = 0,
     val highlightedCharacter: Char? = null,
+    val problemCharacters: Set<Char> = emptySet(),
+    val easyCharacters: Set<Char> = emptySet(),
     val stopPlaybackRequested: Boolean = false,
     val coachState: CoachState = CoachState.IDLE,
     val roundIndex: Int = 0,
@@ -74,9 +89,18 @@ data class DitDaUiState(
     val textPlaybackCurrentIndex: Int? = null
 )
 
+data class TrainingSetTapResult(
+    val expected: Char?,
+    val actual: Char,
+    val isCorrect: Boolean,
+    val correctionCharacter: Char?,
+    val latencyMs: Int
+)
+
 class DitDaViewModel(
     private val stateStore: DitDaStateStore = InMemoryDitDaStateStore(),
     private val shuffler: (List<Char>) -> List<Char> = { chars -> chars.shuffled() },
+    private val curriculumDecisionEngine: CurriculumDecisionEngine = CurriculumDecisionEngine(),
     private val coachCoordinator: VoiceCoachCoordinator = VoiceCoachCoordinator(
         commandParser = CommandParser(),
         vocabulary = PhoneticVocabulary(),
@@ -99,6 +123,13 @@ class DitDaViewModel(
     private val _state = MutableStateFlow(loadInitialState())
     val state: StateFlow<DitDaUiState> = _state.asStateFlow()
     private var lastRandomizedTrainingSet: List<Char>? = null
+    private val trainingSetPerformanceTracker = TrainingSetPerformanceTracker()
+    private var expectedTrainingCharacter: Char? = null
+    private var expectedTrainingCharacterStartedAtMs: Long? = null
+    private var expectedTrainingCharacterSatisfied: Boolean = false
+    private var pendingCorrectionCharacter: Char? = null
+    private var stableIterations: Int = 0
+    private var unstableIterations: Int = 0
 
     init {
         coachCoordinator.setCurrentCharacters(_state.value.currentCharacters)
@@ -214,8 +245,27 @@ class DitDaViewModel(
         }
     }
 
+    fun setPlaybackMode(mode: PlaybackMode) {
+        updateState {
+            it.copy(
+                playbackMode = mode,
+                isPlaying = mode != PlaybackMode.IDLE
+            )
+        }
+    }
+
     fun setPlaying(value: Boolean) {
-        updateState { it.copy(isPlaying = value) }
+        if (!value) {
+            setPlaybackMode(PlaybackMode.IDLE)
+            return
+        }
+        val currentMode = _state.value.playbackMode
+        val mode = if (currentMode == PlaybackMode.IDLE) {
+            PlaybackMode.SINGLE_CHAR
+        } else {
+            currentMode
+        }
+        setPlaybackMode(mode)
     }
 
     fun setCurrentIteration(iteration: Int) {
@@ -228,6 +278,155 @@ class DitDaViewModel(
 
     fun setHighlightedCharacter(character: Char?) {
         updateState { it.copy(highlightedCharacter = character) }
+    }
+
+    fun beginExpectedTrainingCharacter(character: Char, startedAtMs: Long) {
+        expectedTrainingCharacter = character.uppercaseChar()
+        expectedTrainingCharacterStartedAtMs = startedAtMs
+        expectedTrainingCharacterSatisfied = false
+    }
+
+    fun clearExpectedTrainingCharacter() {
+        expectedTrainingCharacter = null
+        expectedTrainingCharacterStartedAtMs = null
+        expectedTrainingCharacterSatisfied = false
+    }
+
+    fun onTrainingSetTap(actual: Char, nowMs: Long): TrainingSetTapResult {
+        val expected = expectedTrainingCharacter
+        val normalizedActual = actual.uppercaseChar()
+        if (expected == null) {
+            return TrainingSetTapResult(
+                expected = null,
+                actual = normalizedActual,
+                isCorrect = false,
+                correctionCharacter = null,
+                latencyMs = 0
+            )
+        }
+
+        val startedAt = expectedTrainingCharacterStartedAtMs ?: nowMs
+        val latencyMs = (nowMs - startedAt).coerceAtLeast(0L).toInt()
+        trainingSetPerformanceTracker.record(
+            expected = expected,
+            actual = normalizedActual,
+            latencyMs = latencyMs
+        )
+        val snapshot = trainingSetPerformanceTracker.snapshot()
+        updateState {
+            it.copy(
+                problemCharacters = snapshot.problemCharacters,
+                easyCharacters = snapshot.easyCharacters
+            )
+        }
+
+        val correct = expected == normalizedActual
+        if (correct) {
+            expectedTrainingCharacterSatisfied = true
+        }
+        if (!correct) {
+            pendingCorrectionCharacter = expected
+        }
+        return TrainingSetTapResult(
+            expected = expected,
+            actual = normalizedActual,
+            isCorrect = correct,
+            correctionCharacter = if (correct) null else expected,
+            latencyMs = latencyMs
+        )
+    }
+
+    fun consumePendingCorrectionCharacter(): Char? {
+        val correction = pendingCorrectionCharacter
+        pendingCorrectionCharacter = null
+        return correction
+    }
+
+    fun shouldAdvanceTrainingSetCharacter(nowMs: Long, timeoutMs: Long): Boolean {
+        val expected = expectedTrainingCharacter ?: return true
+        if (expectedTrainingCharacterSatisfied) {
+            return true
+        }
+        val startedAt = expectedTrainingCharacterStartedAtMs ?: return true
+        val elapsed = nowMs - startedAt
+        if (elapsed >= timeoutMs.coerceAtLeast(0L)) {
+            return true
+        }
+        return expected !in _state.value.currentCharacters
+    }
+
+    fun resetTrainingSetAdaptiveSession() {
+        trainingSetPerformanceTracker.clear()
+        clearExpectedTrainingCharacter()
+        pendingCorrectionCharacter = null
+        stableIterations = 0
+        unstableIterations = 0
+        updateState {
+            it.copy(
+                problemCharacters = emptySet(),
+                easyCharacters = emptySet()
+            )
+        }
+    }
+
+    fun currentTrainingSetPerformanceSnapshot(): TrainingSetPerformanceSnapshot {
+        return trainingSetPerformanceTracker.snapshot()
+    }
+
+    fun evaluateTrainingSetAdaptation(): CurriculumCommand {
+        val snapshot = trainingSetPerformanceTracker.snapshot()
+        val stable = snapshot.totalChars > 0 &&
+            snapshot.accuracyPercent >= 92 &&
+            snapshot.medianLatencyMs <= 450 &&
+            snapshot.problemCharacters.isEmpty()
+        val unstable = snapshot.totalChars > 0 &&
+            (snapshot.accuracyPercent < 80 ||
+                snapshot.medianLatencyMs > 900 ||
+                snapshot.problemCharacters.isNotEmpty())
+
+        stableIterations = if (stable) stableIterations + 1 else 0
+        unstableIterations = if (unstable) unstableIterations + 1 else 0
+
+        val command = curriculumDecisionEngine.decideTrainingSetAdjustment(
+            currentList = _state.value.currentCharacters,
+            metrics = snapshot,
+            stableIterations = stableIterations,
+            unstableIterations = unstableIterations,
+            characterWpm = _state.value.settings.characterWpm,
+            effectiveWpm = _state.value.settings.effectiveWpm,
+            minCharacterWpm = MIN_CHARACTER_WPM,
+            minEffectiveWpm = MIN_EFFECTIVE_WPM
+        )
+        applyCurriculumCommand(command)
+        if (command.type != CommandType.KEEP_LIST) {
+            stableIterations = 0
+            unstableIterations = 0
+        }
+        return command
+    }
+
+    fun applyCurriculumCommand(command: CurriculumCommand) {
+        when (command.type) {
+            CommandType.KEEP_LIST -> Unit
+            CommandType.EXPAND_LIST -> {
+                val commandCharacter = command.newCharacter
+                if (commandCharacter != null && commandCharacter !in _state.value.currentCharacters) {
+                    val updated = _state.value.currentCharacters + commandCharacter
+                    coachCoordinator.setCurrentCharacters(updated)
+                    updateAndPersist {
+                        it.copy(
+                            currentCharacters = updated,
+                            nextCharacter = KochSequence.full().firstOrNull { char -> char !in updated }
+                        )
+                    }
+                } else {
+                    advanceToNextCharacter()
+                }
+            }
+            CommandType.REMOVE_LATEST -> removeLatestCharacter()
+            CommandType.SPEED_UP -> increaseSpeedsBalanced()
+            CommandType.SPEED_DOWN -> decreaseSpeedsBalanced()
+        }
     }
 
     fun updateTextPlaybackInput(value: String) {
@@ -360,6 +559,44 @@ class DitDaViewModel(
     fun onCoachRoundCompleted(attempts: List<VoiceAttempt>, nowMs: Long = System.currentTimeMillis()) {
         coachCoordinator.onRoundCompleted(attempts, nowMs)
         syncCoachState(persist = true)
+    }
+
+    private fun increaseSpeedsBalanced() {
+        updateAndPersist {
+            val settings = it.settings
+            val updatedSettings = if (settings.effectiveWpm < settings.characterWpm) {
+                settings.copy(effectiveWpm = settings.effectiveWpm + 1)
+            } else if (settings.characterWpm < MAX_CHARACTER_WPM) {
+                val raisedCharacter = settings.characterWpm + 1
+                settings.copy(
+                    characterWpm = raisedCharacter,
+                    effectiveWpm = (settings.effectiveWpm + 1).coerceAtMost(raisedCharacter)
+                )
+            } else {
+                settings
+            }
+            syncCoachSettings(updatedSettings)
+            it.copy(settings = updatedSettings)
+        }
+    }
+
+    private fun decreaseSpeedsBalanced() {
+        updateAndPersist {
+            val settings = it.settings
+            val updatedSettings = if (settings.effectiveWpm > MIN_EFFECTIVE_WPM) {
+                settings.copy(effectiveWpm = settings.effectiveWpm - 1)
+            } else if (settings.characterWpm > MIN_CHARACTER_WPM) {
+                val loweredCharacter = settings.characterWpm - 1
+                settings.copy(
+                    characterWpm = loweredCharacter,
+                    effectiveWpm = settings.effectiveWpm.coerceAtMost(loweredCharacter)
+                )
+            } else {
+                settings
+            }
+            syncCoachSettings(updatedSettings)
+            it.copy(settings = updatedSettings)
+        }
     }
 
     private fun loadInitialState(): DitDaUiState {

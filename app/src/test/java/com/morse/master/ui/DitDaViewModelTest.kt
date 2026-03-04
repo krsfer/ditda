@@ -2,6 +2,8 @@ package com.morse.master.ui
 
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
+import com.morse.master.ai.CommandType
+import com.morse.master.ai.CurriculumCommand
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
@@ -265,6 +267,105 @@ class DitDaViewModelTest {
             vm.resetCurrentIteration()
             assertThat(awaitItem().currentIteration).isEqualTo(0)
         }
+    }
+
+    @Test
+    fun `records wrong training-set tap and returns correction target`() {
+        val vm = DitDaViewModel()
+
+        vm.setPlaybackMode(PlaybackMode.TRAINING_SET)
+        vm.beginExpectedTrainingCharacter(character = 'U', startedAtMs = 1_000L)
+
+        val result = vm.onTrainingSetTap(actual = 'M', nowMs = 1_420L)
+
+        assertThat(result.isCorrect).isFalse()
+        assertThat(result.expected).isEqualTo('U')
+        assertThat(result.correctionCharacter).isEqualTo('U')
+    }
+
+    @Test
+    fun `records correct training-set taps and marks easy character`() {
+        val vm = DitDaViewModel()
+        vm.setPlaybackMode(PlaybackMode.TRAINING_SET)
+
+        repeat(3) { index ->
+            vm.beginExpectedTrainingCharacter(character = 'K', startedAtMs = 1_000L + (index * 200))
+            vm.onTrainingSetTap(actual = 'K', nowMs = 1_200L + (index * 200))
+        }
+
+        assertThat(vm.state.value.easyCharacters).contains('K')
+    }
+
+    @Test
+    fun `does not advance training-set character before correct tap or timeout`() {
+        val vm = DitDaViewModel()
+        vm.setPlaybackMode(PlaybackMode.TRAINING_SET)
+        vm.beginExpectedTrainingCharacter(character = 'K', startedAtMs = 1_000L)
+
+        assertThat(
+            vm.shouldAdvanceTrainingSetCharacter(
+                nowMs = 1_600L,
+                timeoutMs = 1_500L
+            )
+        ).isFalse()
+    }
+
+    @Test
+    fun `advances training-set character when correct tap is received`() {
+        val vm = DitDaViewModel()
+        vm.setPlaybackMode(PlaybackMode.TRAINING_SET)
+        vm.beginExpectedTrainingCharacter(character = 'K', startedAtMs = 1_000L)
+
+        vm.onTrainingSetTap(actual = 'K', nowMs = 1_200L)
+
+        assertThat(
+            vm.shouldAdvanceTrainingSetCharacter(
+                nowMs = 1_300L,
+                timeoutMs = 1_500L
+            )
+        ).isTrue()
+    }
+
+    @Test
+    fun `advances training-set character after timeout even without correct tap`() {
+        val vm = DitDaViewModel()
+        vm.setPlaybackMode(PlaybackMode.TRAINING_SET)
+        vm.beginExpectedTrainingCharacter(character = 'K', startedAtMs = 1_000L)
+
+        vm.onTrainingSetTap(actual = 'M', nowMs = 1_200L)
+
+        assertThat(
+            vm.shouldAdvanceTrainingSetCharacter(
+                nowMs = 2_600L,
+                timeoutMs = 1_500L
+            )
+        ).isTrue()
+    }
+
+    @Test
+    fun `applies speed up and speed down commands within bounds`() {
+        val vm = DitDaViewModel()
+
+        vm.updateCharacterWpm(30)
+        vm.updateEffectiveWpm(8)
+        vm.applyCurriculumCommand(CurriculumCommand(type = CommandType.SPEED_UP))
+        assertThat(vm.state.value.settings.effectiveWpm).isEqualTo(9)
+
+        vm.applyCurriculumCommand(CurriculumCommand(type = CommandType.SPEED_DOWN))
+        assertThat(vm.state.value.settings.effectiveWpm).isEqualTo(8)
+    }
+
+    @Test
+    fun `auto remove command drops latest unlocked character only above base`() {
+        val vm = DitDaViewModel()
+        vm.advanceToNextCharacter()
+        assertThat(vm.state.value.currentCharacters).containsExactly('K', 'M', 'U').inOrder()
+
+        vm.applyCurriculumCommand(CurriculumCommand(type = CommandType.REMOVE_LATEST))
+        assertThat(vm.state.value.currentCharacters).containsExactly('K', 'M').inOrder()
+
+        vm.applyCurriculumCommand(CurriculumCommand(type = CommandType.REMOVE_LATEST))
+        assertThat(vm.state.value.currentCharacters).containsExactly('K', 'M').inOrder()
     }
 
     @Test

@@ -69,6 +69,8 @@ import kotlin.math.roundToInt
 
 private const val REPEAT_SLIDER_ENDLESS_VALUE = 11
 private const val TEXT_PLAYBACK_PAUSE_POLL_MS = 60L
+private const val TRAINING_SET_RESPONSE_TIMEOUT_MS = 1_500L
+private const val TRAINING_SET_RESPONSE_POLL_MS = 40L
 private const val PARTIAL_WAKE_LOCK_TAG = "com.morse.master:session"
 
 internal fun maxTrainingLevels(): Int = KochSequence.full().size
@@ -518,9 +520,11 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                         maxTrainingLevels = maxTrainingLevels(),
                         settings = state.settings,
                         nextCharacter = state.nextCharacter,
-                        isPlaying = state.isPlaying,
+                        playbackMode = state.playbackMode,
                         currentIteration = state.currentIteration,
                         highlightedCharacter = state.highlightedCharacter,
+                        problemCharacters = state.problemCharacters,
+                        easyCharacters = state.easyCharacters,
                         coachState = state.coachState,
                         sessionElapsedMs = state.sessionElapsedMs,
                         lastCoachMessage = state.lastCoachMessage,
@@ -528,28 +532,34 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                         micPermissionGranted = micPermissionGranted,
                         onCharacterPressed = { char ->
                             scope.launch {
-                                viewModel.setPlaying(true)
+                                val current = viewModel.state.value
+                                if (current.playbackMode == PlaybackMode.TRAINING_SET) {
+                                    viewModel.onTrainingSetTap(
+                                        actual = char,
+                                        nowMs = System.currentTimeMillis()
+                                    )
+                                    return@launch
+                                }
+
+                                viewModel.setPlaybackMode(PlaybackMode.SINGLE_CHAR)
                                 try {
-                                    player.playCharacter(char, state.settings)
+                                    player.playCharacter(char, current.settings)
                                 } finally {
-                                    viewModel.setPlaying(false)
+                                    viewModel.setPlaybackMode(PlaybackMode.IDLE)
                                 }
                             }
                         },
                         onPlaySetPressed = {
-                            if (state.isPlaying) {
+                            if (state.playbackMode == PlaybackMode.TRAINING_SET) {
                                 viewModel.requestPlaybackStop()
                             } else {
                                 val settingsSnapshot = state.settings
                                 viewModel.clearPlaybackStopRequest()
                                 viewModel.resetCurrentIteration()
-                                viewModel.setPlaying(true)
+                                viewModel.resetTrainingSetAdaptiveSession()
+                                viewModel.setPlaybackMode(PlaybackMode.TRAINING_SET)
                                 scope.launch {
                                     try {
-                                        val timing = MorseTiming(
-                                            characterWpm = settingsSnapshot.characterWpm,
-                                            effectiveWpm = settingsSnapshot.effectiveWpm
-                                        )
                                         val totalIterations = totalTrainingSetIterations(
                                             settingsSnapshot.trainingSetRepeatCount
                                         )
@@ -563,12 +573,78 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                                             val playSequence = viewModel.nextTrainingSetForPlayback()
                                             for ((index, char) in playSequence.withIndex()) {
                                                 if (viewModel.isPlaybackStopRequested()) break@playback
+                                                val loopState = viewModel.state.value
+                                                val loopSettings = loopState.settings
+                                                val timing = MorseTiming(
+                                                    characterWpm = loopSettings.characterWpm,
+                                                    effectiveWpm = loopSettings.effectiveWpm
+                                                )
+                                                val preCorrection = viewModel.consumePendingCorrectionCharacter()
+                                                if (preCorrection != null && loopSettings.soundEnabled) {
+                                                    val correctionSettings = loopSettings.copy(
+                                                        effectiveWpm = (loopSettings.effectiveWpm - 2).coerceAtLeast(5)
+                                                    )
+                                                    if (loopSettings.highlightPlaybackEnabled) {
+                                                        viewModel.setHighlightedCharacter(preCorrection)
+                                                    }
+                                                    player.playCharacter(preCorrection, correctionSettings)
+                                                    if (loopSettings.highlightPlaybackEnabled) {
+                                                        viewModel.setHighlightedCharacter(null)
+                                                    }
+                                                }
+                                                viewModel.beginExpectedTrainingCharacter(
+                                                    character = char,
+                                                    startedAtMs = System.currentTimeMillis()
+                                                )
 
-                                                if (settingsSnapshot.highlightPlaybackEnabled) {
+                                                if (loopSettings.highlightPlaybackEnabled) {
                                                     viewModel.setHighlightedCharacter(char)
                                                 }
-                                                player.playCharacter(char, settingsSnapshot)
-                                                if (settingsSnapshot.highlightPlaybackEnabled) {
+                                                player.playCharacter(char, loopSettings)
+
+                                                while (
+                                                    isActive &&
+                                                    !viewModel.isPlaybackStopRequested() &&
+                                                    !viewModel.shouldAdvanceTrainingSetCharacter(
+                                                        nowMs = System.currentTimeMillis(),
+                                                        timeoutMs = TRAINING_SET_RESPONSE_TIMEOUT_MS
+                                                    )
+                                                ) {
+                                                    val pendingCorrection = viewModel.consumePendingCorrectionCharacter()
+                                                    if (pendingCorrection != null && loopSettings.soundEnabled) {
+                                                        val correctionSettings = loopSettings.copy(
+                                                            effectiveWpm = (loopSettings.effectiveWpm - 2).coerceAtLeast(5)
+                                                        )
+                                                        if (loopSettings.highlightPlaybackEnabled) {
+                                                            viewModel.setHighlightedCharacter(pendingCorrection)
+                                                        }
+                                                        player.playCharacter(pendingCorrection, correctionSettings)
+                                                        if (loopSettings.highlightPlaybackEnabled) {
+                                                            viewModel.setHighlightedCharacter(null)
+                                                        }
+                                                    } else {
+                                                        delay(TRAINING_SET_RESPONSE_POLL_MS)
+                                                    }
+                                                }
+
+                                                val correction = viewModel.consumePendingCorrectionCharacter()
+                                                if (
+                                                    correction != null &&
+                                                    loopSettings.soundEnabled &&
+                                                    !viewModel.isPlaybackStopRequested()
+                                                ) {
+                                                    val correctionSettings = loopSettings.copy(
+                                                        effectiveWpm = (loopSettings.effectiveWpm - 2).coerceAtLeast(5)
+                                                    )
+                                                    if (loopSettings.highlightPlaybackEnabled) {
+                                                        viewModel.setHighlightedCharacter(correction)
+                                                    }
+                                                    player.playCharacter(correction, correctionSettings)
+                                                    if (loopSettings.highlightPlaybackEnabled) {
+                                                        viewModel.setHighlightedCharacter(null)
+                                                    }
+                                                }
+                                                if (loopSettings.highlightPlaybackEnabled) {
                                                     viewModel.setHighlightedCharacter(null)
                                                 }
                                                 if (viewModel.isPlaybackStopRequested()) break@playback
@@ -576,18 +652,26 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                                                     delay(timing.interCharGapMs.toLong())
                                                 }
                                             }
+                                            viewModel.clearExpectedTrainingCharacter()
+                                            viewModel.evaluateTrainingSetAdaptation()
 
                                             if ((totalIterations == null || repetition < totalIterations) &&
                                                 !viewModel.isPlaybackStopRequested()
                                             ) {
-                                                delay(interIterationPauseMs(timing))
+                                                val postIterationState = viewModel.state.value
+                                                val postIterationTiming = MorseTiming(
+                                                    characterWpm = postIterationState.settings.characterWpm,
+                                                    effectiveWpm = postIterationState.settings.effectiveWpm
+                                                )
+                                                delay(interIterationPauseMs(postIterationTiming))
                                             }
                                         }
                                     } finally {
                                         viewModel.clearPlaybackStopRequest()
                                         viewModel.resetCurrentIteration()
+                                        viewModel.clearExpectedTrainingCharacter()
                                         viewModel.setHighlightedCharacter(null)
-                                        viewModel.setPlaying(false)
+                                        viewModel.setPlaybackMode(PlaybackMode.IDLE)
                                     }
                                 }
                             }
@@ -649,7 +733,7 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                             viewModel.setTextPlaybackPaused(false)
                             viewModel.clearTextPlaybackCurrentIndex()
                             viewModel.setTextPlaybackActive(true)
-                            viewModel.setPlaying(true)
+                            viewModel.setPlaybackMode(PlaybackMode.TEXT)
 
                             scope.launch {
                                 try {
@@ -712,7 +796,7 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                                     viewModel.setTextPlaybackPaused(false)
                                     viewModel.clearTextPlaybackCurrentIndex()
                                     viewModel.setTextPlaybackActive(false)
-                                    viewModel.setPlaying(false)
+                                    viewModel.setPlaybackMode(PlaybackMode.IDLE)
                                 }
                             }
                         },

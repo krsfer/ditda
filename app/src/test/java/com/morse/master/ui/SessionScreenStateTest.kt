@@ -36,14 +36,14 @@ class SessionScreenStateTest {
     }
 
     @Test
-    fun `disables character buttons while manual playback is active and keeps highlight state`() {
+    fun `disables character buttons while single character playback is active and keeps highlight state`() {
         val playingHighlighted = characterButtonVisualState(
-            isPlaying = true,
+            playbackMode = PlaybackMode.SINGLE_CHAR,
             character = 'K',
             highlightedCharacter = 'K'
         )
         val playingNotHighlighted = characterButtonVisualState(
-            isPlaying = true,
+            playbackMode = PlaybackMode.SINGLE_CHAR,
             character = 'M',
             highlightedCharacter = 'K'
         )
@@ -52,6 +52,17 @@ class SessionScreenStateTest {
         assertThat(playingNotHighlighted.enabled).isFalse()
         assertThat(playingHighlighted.isHighlighted).isTrue()
         assertThat(playingNotHighlighted.isHighlighted).isFalse()
+    }
+
+    @Test
+    fun `keeps character buttons enabled while training set playback is active`() {
+        val trainingSetButton = characterButtonVisualState(
+            playbackMode = PlaybackMode.TRAINING_SET,
+            character = 'K',
+            highlightedCharacter = null
+        )
+
+        assertThat(trainingSetButton.enabled).isTrue()
     }
 
     @Test
@@ -64,7 +75,7 @@ class SessionScreenStateTest {
     fun `builds playback iteration counter text for finite and endless modes`() {
         assertThat(
             playbackIterationCounterText(
-                isPlaying = false,
+                playbackMode = PlaybackMode.IDLE,
                 currentIteration = 0,
                 repeatCount = 0
             )
@@ -72,7 +83,7 @@ class SessionScreenStateTest {
 
         assertThat(
             playbackIterationCounterText(
-                isPlaying = true,
+                playbackMode = PlaybackMode.TRAINING_SET,
                 currentIteration = 3,
                 repeatCount = 2
             )
@@ -80,7 +91,7 @@ class SessionScreenStateTest {
 
         assertThat(
             playbackIterationCounterText(
-                isPlaying = true,
+                playbackMode = PlaybackMode.TRAINING_SET,
                 currentIteration = 7,
                 repeatCount = TRAINING_SET_REPEAT_ENDLESS
             )
@@ -90,7 +101,7 @@ class SessionScreenStateTest {
     @Test
     fun `builds progress bar state for finite and endless playback`() {
         val finite = trainingSetProgressBarState(
-            isPlaying = true,
+            playbackMode = PlaybackMode.TRAINING_SET,
             currentIteration = 2,
             repeatCount = 2
         )
@@ -98,7 +109,7 @@ class SessionScreenStateTest {
         assertThat(finite.percentage).isEqualTo(67)
 
         val endless = trainingSetProgressBarState(
-            isPlaying = true,
+            playbackMode = PlaybackMode.TRAINING_SET,
             currentIteration = 7,
             repeatCount = TRAINING_SET_REPEAT_ENDLESS
         )
@@ -135,13 +146,13 @@ class SessionScreenStateTest {
         assertThat(isCoachSessionInProgress(CoachState.ROUND_ACTIVE)).isTrue()
         assertThat(
             isManualCharacterInputEnabled(
-                isPlaying = false,
+                playbackMode = PlaybackMode.IDLE,
                 coachState = CoachState.ROUND_ACTIVE
             )
         ).isFalse()
         assertThat(
             isPlayTrainingSetEnabled(
-                isPlaying = false,
+                playbackMode = PlaybackMode.IDLE,
                 coachState = CoachState.ROUND_ACTIVE
             )
         ).isFalse()
@@ -151,7 +162,7 @@ class SessionScreenStateTest {
     fun `keeps play training set enabled only to stop active manual playback`() {
         assertThat(
             isPlayTrainingSetEnabled(
-                isPlaying = true,
+                playbackMode = PlaybackMode.TRAINING_SET,
                 coachState = CoachState.ROUND_ACTIVE
             )
         ).isTrue()
@@ -162,8 +173,61 @@ class SessionScreenStateTest {
         assertThat(
             isCoachStartEnabled(
                 coachState = CoachState.IDLE,
-                isPlaying = true
+                playbackMode = PlaybackMode.TRAINING_SET
             )
         ).isFalse()
+    }
+
+    @Test
+    fun `disables manual character input during text playback`() {
+        assertThat(
+            isManualCharacterInputEnabled(
+                playbackMode = PlaybackMode.TEXT,
+                coachState = CoachState.IDLE
+            )
+        ).isFalse()
+    }
+
+    @Test
+    fun `disables manual character input during single character playback`() {
+        assertThat(
+            isManualCharacterInputEnabled(
+                playbackMode = PlaybackMode.SINGLE_CHAR,
+                coachState = CoachState.IDLE
+            )
+        ).isFalse()
+    }
+
+    @Test
+    fun `prioritizes highlighted over problem and easy visual states`() {
+        val highlighted = characterButtonVisualState(
+            playbackMode = PlaybackMode.TRAINING_SET,
+            character = 'K',
+            highlightedCharacter = 'K',
+            problemCharacters = setOf('K'),
+            easyCharacters = setOf('K')
+        )
+        val problem = characterButtonVisualState(
+            playbackMode = PlaybackMode.TRAINING_SET,
+            character = 'M',
+            highlightedCharacter = null,
+            problemCharacters = setOf('M'),
+            easyCharacters = emptySet()
+        )
+        val easy = characterButtonVisualState(
+            playbackMode = PlaybackMode.TRAINING_SET,
+            character = 'U',
+            highlightedCharacter = null,
+            problemCharacters = emptySet(),
+            easyCharacters = setOf('U')
+        )
+
+        assertThat(highlighted.isHighlighted).isTrue()
+        assertThat(highlighted.isProblem).isFalse()
+        assertThat(highlighted.isEasy).isFalse()
+        assertThat(problem.isProblem).isTrue()
+        assertThat(problem.isEasy).isFalse()
+        assertThat(easy.isEasy).isTrue()
+        assertThat(easy.isProblem).isFalse()
     }
 }

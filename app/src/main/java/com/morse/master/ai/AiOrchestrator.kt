@@ -14,8 +14,8 @@ class AiOrchestrator(
             val response = nano.runPromptOrNull(
                 """{"current_list":${currentList.map { "\"$it\"" }},"metrics":{"accuracy_percent":${metrics.accuracyPercent},"median_latency_ms":${metrics.medianLatencyMs}}}"""
             )
-            if (response != null && response.contains("\"EXPAND_LIST\"")) {
-                return CurriculumCommand(CommandType.EXPAND_LIST, 'U')
+            parseCurriculumCommand(response, currentList)?.let { parsed ->
+                return parsed
             }
         }
         return when (nano.checkAvailability()) {
@@ -78,6 +78,23 @@ class AiOrchestrator(
             "\"REDUCE_SPEED\"" in body -> CoachDecision.REDUCE_SPEED
             "\"EXPAND_LIST\"" in body -> CoachDecision.EXPAND_LIST
             "\"KEEP_LIST\"" in body -> CoachDecision.KEEP_LIST
+            else -> null
+        }
+    }
+
+    private fun parseCurriculumCommand(response: String?, currentList: List<Char>): CurriculumCommand? {
+        val body = response ?: return null
+        return when {
+            "\"REMOVE_LATEST\"" in body -> CurriculumCommand(CommandType.REMOVE_LATEST)
+            "\"SPEED_UP\"" in body -> CurriculumCommand(CommandType.SPEED_UP, effectiveWpmDelta = 1)
+            "\"SPEED_DOWN\"" in body -> CurriculumCommand(CommandType.SPEED_DOWN, effectiveWpmDelta = -1)
+            "\"EXPAND_LIST\"" in body -> {
+                val next = currentList.firstOrNull()?.let { _ ->
+                    com.morse.master.domain.KochSequence.full().firstOrNull { it !in currentList }
+                } ?: null
+                CurriculumCommand(CommandType.EXPAND_LIST, newCharacter = next)
+            }
+            "\"KEEP_LIST\"" in body -> CurriculumCommand(CommandType.KEEP_LIST)
             else -> null
         }
     }
