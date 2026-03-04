@@ -5,6 +5,7 @@ import kotlin.math.min
 import kotlin.math.sin
 
 private const val DEFAULT_RAMP_MS = 5.0
+private const val DIT_MS_AT_ONE_WPM = 1200
 
 internal fun rampSamplesForPulse(
     numSamples: Int,
@@ -17,24 +18,33 @@ internal fun rampSamplesForPulse(
     return nominalRampSamples.coerceAtMost(maxRampForSustain)
 }
 
+internal fun rampMsForCharacterWpm(characterWpm: Int): Double {
+    val safeWpm = characterWpm.coerceAtLeast(1)
+    val ditDurationMs = DIT_MS_AT_ONE_WPM / safeWpm
+    return ditDurationMs * 0.1
+}
+
 class MorseToneGenerator {
-    private val nominalRampTableBySampleRate = ConcurrentHashMap<Int, DoubleArray>()
+    private val nominalRampTableByRateAndSamples = ConcurrentHashMap<Pair<Int, Int>, DoubleArray>()
 
     fun generatePulse(
         durationMs: Int,
         sampleRate: Int = 44100,
         frequencyHz: Int = 600,
-        gain: Double = 0.25
+        gain: Double = 0.25,
+        rampMs: Double = DEFAULT_RAMP_MS
     ): ShortArray {
         val numSamples = (sampleRate * (durationMs / 1000.0)).toInt()
         if (numSamples <= 0) return ShortArray(0)
 
-        val nominalRampTable = nominalRampTableBySampleRate.getOrPut(sampleRate) {
-            buildRampTable((sampleRate * (DEFAULT_RAMP_MS / 1000.0)).toInt().coerceAtLeast(1))
+        val nominalRampSamples = (sampleRate * (rampMs / 1000.0)).toInt().coerceAtLeast(1)
+        val nominalRampTable = nominalRampTableByRateAndSamples.getOrPut(sampleRate to nominalRampSamples) {
+            buildRampTable(nominalRampSamples)
         }
         val rampSamples = rampSamplesForPulse(
             numSamples = numSamples,
-            sampleRate = sampleRate
+            sampleRate = sampleRate,
+            rampMs = rampMs
         )
         val rampLastIndex = rampSamples - 1
         val nominalRampLastIndex = nominalRampTable.size - 1

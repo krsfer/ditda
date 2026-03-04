@@ -6,6 +6,12 @@ import org.junit.Test
 
 class MorseToneGeneratorTest {
     @Test
+    fun `uses ten percent of dit duration for ramp timing`() {
+        assertThat(rampMsForCharacterWpm(30)).isWithin(0.0001).of(4.0)
+        assertThat(rampMsForCharacterWpm(25)).isWithin(0.0001).of(4.8)
+    }
+
+    @Test
     fun `applies start and end smoothing`() {
         val pcm = MorseToneGenerator().generatePulse(durationMs = 120, sampleRate = 44100)
         assertThat(abs(pcm.first().toInt())).isLessThan(200)

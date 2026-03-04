@@ -12,6 +12,7 @@ class MorsePcmRenderer(
     }
 
     fun render(segments: List<MorseSegment>, settings: DitDaSettings): ShortArray {
+        val rampMs = rampMsForCharacterWpm(settings.characterWpm)
         val toneGain = if (settings.characterWpm >= HIGH_SPEED_CHARACTER_WPM) {
             BEGINNER_HIGH_SPEED_GAIN_COMPENSATION * 0.25
         } else {
@@ -23,7 +24,8 @@ class MorsePcmRenderer(
                     durationMs = segment.durationMs,
                     sampleRate = sampleRate,
                     frequencyHz = settings.toneHz,
-                    gain = toneGain
+                    gain = toneGain,
+                    rampMs = rampMs
                 )
 
                 is MorseSegment.Gap -> {

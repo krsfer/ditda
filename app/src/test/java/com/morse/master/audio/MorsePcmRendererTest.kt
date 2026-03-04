@@ -47,4 +47,24 @@ class MorsePcmRendererTest {
         val highSpeedPeak = highSpeed.maxOf { abs(it.toInt()) }
         assertThat(highSpeedPeak).isGreaterThan(baselinePeak)
     }
+
+    @Test
+    fun `applies shorter attack at higher character wpm using dit percentage ramp`() {
+        val renderer = MorsePcmRenderer(
+            sampleRate = 1_000,
+            toneGenerator = MorseToneGenerator()
+        )
+        val segments = listOf(MorseSegment.Tone(durationMs = 40))
+
+        val slower = renderer.render(
+            segments = segments,
+            settings = DitDaSettings(characterWpm = 20, effectiveWpm = 8, toneHz = 50, darkMode = true)
+        )
+        val faster = renderer.render(
+            segments = segments,
+            settings = DitDaSettings(characterWpm = 25, effectiveWpm = 8, toneHz = 50, darkMode = true)
+        )
+
+        assertThat(abs(faster[3].toInt())).isGreaterThan(abs(slower[3].toInt()))
+    }
 }
