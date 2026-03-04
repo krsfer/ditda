@@ -6,13 +6,24 @@ class MorsePcmRenderer(
     private val sampleRate: Int = 44100,
     private val toneGenerator: MorseToneGenerator = MorseToneGenerator()
 ) {
+    private companion object {
+        private const val HIGH_SPEED_CHARACTER_WPM = 30
+        private const val BEGINNER_HIGH_SPEED_GAIN_COMPENSATION = 1.05
+    }
+
     fun render(segments: List<MorseSegment>, settings: DitDaSettings): ShortArray {
+        val toneGain = if (settings.characterWpm >= HIGH_SPEED_CHARACTER_WPM) {
+            BEGINNER_HIGH_SPEED_GAIN_COMPENSATION * 0.25
+        } else {
+            0.25
+        }
         val chunks = segments.map { segment ->
             when (segment) {
                 is MorseSegment.Tone -> toneGenerator.generatePulse(
                     durationMs = segment.durationMs,
                     sampleRate = sampleRate,
-                    frequencyHz = settings.toneHz
+                    frequencyHz = settings.toneHz,
+                    gain = toneGain
                 )
 
                 is MorseSegment.Gap -> {

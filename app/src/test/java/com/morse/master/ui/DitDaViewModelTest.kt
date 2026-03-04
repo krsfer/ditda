@@ -83,6 +83,29 @@ class DitDaViewModelTest {
     }
 
     @Test
+    fun `applies 30 WPM beginner preset and persists it`() {
+        val store = FakeDitDaStateStore(loadedState = DitDaPersistedState())
+        val vm = DitDaViewModel(stateStore = store)
+
+        vm.updateCharacterWpm(18)
+        vm.updateEffectiveWpm(6)
+        vm.updateToneHz(500)
+
+        vm.applyThirtyWpmBeginnerPreset()
+
+        val settings = vm.state.value.settings
+        assertThat(settings.characterWpm).isEqualTo(30)
+        assertThat(settings.effectiveWpm).isEqualTo(10)
+        assertThat(settings.toneHz).isEqualTo(650)
+
+        val saved = store.lastSaved
+        assertThat(saved).isNotNull()
+        assertThat(saved?.settings?.characterWpm).isEqualTo(30)
+        assertThat(saved?.settings?.effectiveWpm).isEqualTo(10)
+        assertThat(saved?.settings?.toneHz).isEqualTo(650)
+    }
+
+    @Test
     fun `tracks text playback input state and pause controls`() = runTest {
         val vm = DitDaViewModel()
 

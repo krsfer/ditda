@@ -39,6 +39,18 @@ data class DitDaSettings(
     val feedbackVerbose: Boolean = false
 )
 
+data class SpeedPreset(
+    val characterWpm: Int,
+    val effectiveWpm: Int,
+    val toneHz: Int
+)
+
+val Beginner30WpmPreset = SpeedPreset(
+    characterWpm = 30,
+    effectiveWpm = 10,
+    toneHz = 650
+)
+
 data class DitDaUiState(
     val activeTab: AppTab = AppTab.PRACTICE,
     val settings: DitDaSettings = DitDaSettings(),
@@ -105,6 +117,18 @@ class DitDaViewModel(
 
     fun updateToneHz(value: Int) {
         updateAndPersist { it.copy(settings = it.settings.copy(toneHz = value)) }
+    }
+
+    fun applyThirtyWpmBeginnerPreset() {
+        updateAndPersist {
+            it.copy(
+                settings = it.settings.copy(
+                    characterWpm = Beginner30WpmPreset.characterWpm,
+                    effectiveWpm = Beginner30WpmPreset.effectiveWpm,
+                    toneHz = Beginner30WpmPreset.toneHz
+                )
+            )
+        }
     }
 
     fun updateDarkMode(enabled: Boolean) {

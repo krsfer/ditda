@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__serena__read_memory",
+      "mcp__serena__find_symbol",
+      "Bash(./deploy.sh 2>&1)",
+      "Bash(./deploy.sh --skip-build 2>&1)"
+    ]
+  }
+}

@@ -160,10 +160,18 @@ internal fun textPlaybackHighlightedIndex(
 internal fun highlightedTextPlaybackPreview(
     normalizedInput: String,
     highlightedIndex: Int?,
-    highlightColor: androidx.compose.ui.graphics.Color
+    playedUpTo: Int,
+    highlightColor: androidx.compose.ui.graphics.Color,
+    playedColor: androidx.compose.ui.graphics.Color
 ): AnnotatedString {
     return buildAnnotatedString {
         append(normalizedInput)
+        val playedEnd = (highlightedIndex ?: playedUpTo).coerceIn(0, normalizedInput.length)
+        for (i in 0 until playedEnd) {
+            if (normalizedInput[i] != ' ') {
+                addStyle(SpanStyle(background = playedColor), i, i + 1)
+            }
+        }
         if (highlightedIndex != null) {
             addStyle(
                 style = SpanStyle(background = highlightColor),
@@ -222,6 +230,12 @@ internal fun shouldHoldPartialWakeLock(
     }
     val coachSessionActive = coachState != CoachState.IDLE && coachState != CoachState.STOPPED
     return activeTab == AppTab.PRACTICE && coachSessionActive
+}
+
+internal fun isThirtyWpmBeginnerPresetActive(settings: DitDaSettings): Boolean {
+    return settings.characterWpm == Beginner30WpmPreset.characterWpm &&
+        settings.effectiveWpm == Beginner30WpmPreset.effectiveWpm &&
+        settings.toneHz == Beginner30WpmPreset.toneHz
 }
 
 @Composable
@@ -632,7 +646,6 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                                             } else {
                                                 viewModel.setTextPlaybackCurrentIndex(index)
                                                 player.playCharacter(token, loopSettings)
-                                                viewModel.clearTextPlaybackCurrentIndex()
                                             }
                                             viewModel.setTextPlaybackProgress(index + 1)
 
@@ -682,6 +695,7 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                     AppTab.SETTINGS -> SettingsScreen(
                         settings = state.settings,
                         modifier = Modifier.fillMaxSize(),
+                        onApplyThirtyWpmBeginnerPreset = viewModel::applyThirtyWpmBeginnerPreset,
                         onCharacterWpmChange = viewModel::updateCharacterWpm,
                         onEffectiveWpmChange = viewModel::updateEffectiveWpm,
                         onToneChange = viewModel::updateToneHz,
@@ -792,7 +806,9 @@ private fun TextPlaybackScreen(
                 text = highlightedTextPlaybackPreview(
                     normalizedInput = normalizedInput,
                     highlightedIndex = highlightedIndex,
-                    highlightColor = MaterialTheme.colorScheme.primaryContainer
+                    playedUpTo = progress,
+                    highlightColor = MaterialTheme.colorScheme.primaryContainer,
+                    playedColor = MaterialTheme.colorScheme.secondaryContainer
                 )
             )
         }
@@ -848,6 +864,7 @@ private fun TextPlaybackScreen(
 private fun SettingsScreen(
     settings: DitDaSettings,
     modifier: Modifier = Modifier,
+    onApplyThirtyWpmBeginnerPreset: () -> Unit,
     onCharacterWpmChange: (Int) -> Unit,
     onEffectiveWpmChange: (Int) -> Unit,
     onToneChange: (Int) -> Unit,
@@ -861,6 +878,8 @@ private fun SettingsScreen(
     onWakePhraseRequiredChange: (Boolean) -> Unit,
     onFeedbackVerboseChange: (Boolean) -> Unit
 ) {
+    val presetActive = isThirtyWpmBeginnerPresetActive(settings)
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -868,6 +887,21 @@ private fun SettingsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        Button(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onApplyThirtyWpmBeginnerPreset
+        ) {
+            Text("Apply 30 WPM Beginner Preset")
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("30 WPM Beginner Preset")
+            Text(if (presetActive) "ACTIVE" else "CUSTOM")
+        }
+        Text("30/10 WPM, 650 Hz, tuned for 5ms ramps at higher speed.")
+
         Text("Character Speed: ${settings.characterWpm} WPM")
         Slider(
             value = settings.characterWpm.toFloat(),

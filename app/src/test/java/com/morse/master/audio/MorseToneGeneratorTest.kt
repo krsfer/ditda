@@ -19,4 +19,10 @@ class MorseToneGeneratorTest {
         assertThat(abs(pcm.first().toInt())).isEqualTo(0)
         assertThat(abs(pcm.last().toInt())).isEqualTo(0)
     }
+
+    @Test
+    fun `caps ramp samples to preserve sustain core on short pulses`() {
+        assertThat(rampSamplesForPulse(numSamples = 8, sampleRate = 1000)).isEqualTo(3)
+        assertThat(rampSamplesForPulse(numSamples = 40, sampleRate = 1000)).isEqualTo(5)
+    }
 }

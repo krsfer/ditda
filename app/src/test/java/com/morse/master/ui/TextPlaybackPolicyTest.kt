@@ -71,11 +71,13 @@ class TextPlaybackPolicyTest {
     }
 
     @Test
-    fun `builds preview with temporary background highlight style for active character`() {
+    fun `builds preview with highlight on active character only when no chars yet played`() {
         val preview = highlightedTextPlaybackPreview(
             normalizedInput = "CQ",
             highlightedIndex = 1,
-            highlightColor = Color.Red
+            playedUpTo = 0,
+            highlightColor = Color.Red,
+            playedColor = Color.Blue
         )
 
         assertThat(preview.text).isEqualTo("CQ")
@@ -84,5 +86,64 @@ class TextPlaybackPolicyTest {
         assertThat(span.start).isEqualTo(1)
         assertThat(span.end).isEqualTo(2)
         assertThat(span.item.background).isEqualTo(Color.Red)
+    }
+
+    @Test
+    fun `builds preview with played chars shaded before active character`() {
+        val preview = highlightedTextPlaybackPreview(
+            normalizedInput = "CQD",
+            highlightedIndex = 2,
+            playedUpTo = 3,
+            highlightColor = Color.Red,
+            playedColor = Color.Blue
+        )
+
+        assertThat(preview.text).isEqualTo("CQD")
+        val spans = preview.spanStyles
+        assertThat(spans).hasSize(3) // C played, Q played, D active
+        val playedC = spans.first { it.start == 0 }
+        assertThat(playedC.end).isEqualTo(1)
+        assertThat(playedC.item.background).isEqualTo(Color.Blue)
+        val playedQ = spans.first { it.start == 1 }
+        assertThat(playedQ.end).isEqualTo(2)
+        assertThat(playedQ.item.background).isEqualTo(Color.Blue)
+        val active = spans.first { it.start == 2 }
+        assertThat(active.end).isEqualTo(3)
+        assertThat(active.item.background).isEqualTo(Color.Red)
+    }
+
+    @Test
+    fun `builds preview with played chars shaded and skips space characters`() {
+        val preview = highlightedTextPlaybackPreview(
+            normalizedInput = "A B",
+            highlightedIndex = 2,
+            playedUpTo = 3,
+            highlightColor = Color.Red,
+            playedColor = Color.Blue
+        )
+
+        assertThat(preview.text).isEqualTo("A B")
+        val spans = preview.spanStyles
+        // 'A' played, ' ' skipped, 'B' active
+        assertThat(spans).hasSize(2)
+        val playedA = spans.first { it.start == 0 }
+        assertThat(playedA.item.background).isEqualTo(Color.Blue)
+        val activeB = spans.first { it.start == 2 }
+        assertThat(activeB.item.background).isEqualTo(Color.Red)
+    }
+
+    @Test
+    fun `builds preview with all chars shaded when playback complete and no current index`() {
+        val preview = highlightedTextPlaybackPreview(
+            normalizedInput = "CQ",
+            highlightedIndex = null,
+            playedUpTo = 2,
+            highlightColor = Color.Red,
+            playedColor = Color.Blue
+        )
+
+        assertThat(preview.text).isEqualTo("CQ")
+        assertThat(preview.spanStyles).hasSize(2)
+        assertThat(preview.spanStyles.all { it.item.background == Color.Blue }).isTrue()
     }
 }
