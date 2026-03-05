@@ -75,6 +75,7 @@ data class DitDaUiState(
     val highlightedCharacter: Char? = null,
     val problemCharacters: Set<Char> = emptySet(),
     val easyCharacters: Set<Char> = emptySet(),
+    val adaptationDebugLine: String = "Adapt: stable=0 unstable=0 last=KEEP_LIST",
     val stopPlaybackRequested: Boolean = false,
     val coachState: CoachState = CoachState.IDLE,
     val roundIndex: Int = 0,
@@ -130,6 +131,7 @@ class DitDaViewModel(
     private var pendingCorrectionCharacter: Char? = null
     private var stableIterations: Int = 0
     private var unstableIterations: Int = 0
+    private var lastTrainingSetCommand: CommandType = CommandType.KEEP_LIST
 
     init {
         coachCoordinator.setCurrentCharacters(_state.value.currentCharacters)
@@ -355,16 +357,30 @@ class DitDaViewModel(
         return expected !in _state.value.currentCharacters
     }
 
+    fun shouldHighlightTrainingCharacter(character: Char): Boolean {
+        if (!_state.value.settings.highlightPlaybackEnabled) return false
+
+        val normalized = character.uppercaseChar()
+        val snapshot = trainingSetPerformanceTracker.snapshot()
+        if (snapshot.totalChars < 3) return false
+
+        if (normalized in snapshot.problemCharacters) return true
+        if (unstableIterations > 0 && normalized in snapshot.failedChars) return true
+        return false
+    }
+
     fun resetTrainingSetAdaptiveSession() {
         trainingSetPerformanceTracker.clear()
         clearExpectedTrainingCharacter()
         pendingCorrectionCharacter = null
         stableIterations = 0
         unstableIterations = 0
+        lastTrainingSetCommand = CommandType.KEEP_LIST
         updateState {
             it.copy(
                 problemCharacters = emptySet(),
-                easyCharacters = emptySet()
+                easyCharacters = emptySet(),
+                adaptationDebugLine = adaptationDebugLine()
             )
         }
     }
@@ -376,13 +392,12 @@ class DitDaViewModel(
     fun evaluateTrainingSetAdaptation(): CurriculumCommand {
         val snapshot = trainingSetPerformanceTracker.snapshot()
         val stable = snapshot.totalChars > 0 &&
-            snapshot.accuracyPercent >= 92 &&
-            snapshot.medianLatencyMs <= 450 &&
+            snapshot.accuracyPercent >= 90 &&
+            snapshot.medianLatencyMs <= 900 &&
             snapshot.problemCharacters.isEmpty()
         val unstable = snapshot.totalChars > 0 &&
-            (snapshot.accuracyPercent < 80 ||
-                snapshot.medianLatencyMs > 900 ||
-                snapshot.problemCharacters.isNotEmpty())
+            (snapshot.accuracyPercent < 75 ||
+                snapshot.medianLatencyMs > 1_800)
 
         stableIterations = if (stable) stableIterations + 1 else 0
         unstableIterations = if (unstable) unstableIterations + 1 else 0
@@ -402,10 +417,16 @@ class DitDaViewModel(
             stableIterations = 0
             unstableIterations = 0
         }
+        updateState {
+            it.copy(
+                adaptationDebugLine = adaptationDebugLine()
+            )
+        }
         return command
     }
 
     fun applyCurriculumCommand(command: CurriculumCommand) {
+        lastTrainingSetCommand = command.type
         when (command.type) {
             CommandType.KEEP_LIST -> Unit
             CommandType.EXPAND_LIST -> {
@@ -426,6 +447,11 @@ class DitDaViewModel(
             CommandType.REMOVE_LATEST -> removeLatestCharacter()
             CommandType.SPEED_UP -> increaseSpeedsBalanced()
             CommandType.SPEED_DOWN -> decreaseSpeedsBalanced()
+        }
+        updateState {
+            it.copy(
+                adaptationDebugLine = adaptationDebugLine()
+            )
         }
     }
 
@@ -669,6 +695,10 @@ class DitDaViewModel(
             characterWpm = settings.characterWpm,
             effectiveWpm = settings.effectiveWpm
         )
+    }
+
+    private fun adaptationDebugLine(): String {
+        return "Adapt: stable=$stableIterations unstable=$unstableIterations last=$lastTrainingSetCommand"
     }
 
     private fun updateState(updater: (DitDaUiState) -> DitDaUiState) {

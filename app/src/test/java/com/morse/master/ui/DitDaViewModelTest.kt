@@ -343,6 +343,150 @@ class DitDaViewModelTest {
     }
 
     @Test
+    fun `auto adaptation speeds up after two stable correct iterations`() {
+        val vm = DitDaViewModel()
+        vm.setPlaybackMode(PlaybackMode.TRAINING_SET)
+        vm.updateCharacterWpm(30)
+        vm.updateEffectiveWpm(8)
+
+        repeat(2) { iteration ->
+            val start = 1_000L + (iteration * 10_000L)
+            vm.beginExpectedTrainingCharacter(character = 'K', startedAtMs = start)
+            vm.onTrainingSetTap(actual = 'K', nowMs = start + 300L)
+            vm.beginExpectedTrainingCharacter(character = 'M', startedAtMs = start + 1_000L)
+            vm.onTrainingSetTap(actual = 'M', nowMs = start + 1_300L)
+        }
+
+        val command = vm.evaluateTrainingSetAdaptation()
+        val second = vm.evaluateTrainingSetAdaptation()
+
+        assertThat(command.type).isEqualTo(CommandType.KEEP_LIST)
+        assertThat(second.type).isEqualTo(CommandType.SPEED_UP)
+        assertThat(vm.state.value.settings.effectiveWpm).isEqualTo(9)
+    }
+
+    @Test
+    fun `auto adaptation can expand list after stable correct iterations when spacing is closed`() {
+        val vm = DitDaViewModel()
+        vm.setPlaybackMode(PlaybackMode.TRAINING_SET)
+        vm.updateCharacterWpm(30)
+        vm.updateEffectiveWpm(30)
+
+        repeat(2) { iteration ->
+            val start = 5_000L + (iteration * 10_000L)
+            vm.beginExpectedTrainingCharacter(character = 'K', startedAtMs = start)
+            vm.onTrainingSetTap(actual = 'K', nowMs = start + 250L)
+            vm.beginExpectedTrainingCharacter(character = 'M', startedAtMs = start + 1_000L)
+            vm.onTrainingSetTap(actual = 'M', nowMs = start + 1_250L)
+        }
+
+        vm.evaluateTrainingSetAdaptation()
+        val second = vm.evaluateTrainingSetAdaptation()
+
+        assertThat(second.type).isEqualTo(CommandType.EXPAND_LIST)
+        assertThat(vm.state.value.currentCharacters).containsExactly('K', 'M', 'U').inOrder()
+    }
+
+    @Test
+    fun `moderate correct-tap latency does not trigger speed down`() {
+        val vm = DitDaViewModel()
+        vm.setPlaybackMode(PlaybackMode.TRAINING_SET)
+        vm.updateCharacterWpm(30)
+        vm.updateEffectiveWpm(8)
+
+        repeat(2) { iteration ->
+            val start = 9_000L + (iteration * 10_000L)
+            vm.beginExpectedTrainingCharacter(character = 'K', startedAtMs = start)
+            vm.onTrainingSetTap(actual = 'K', nowMs = start + 700L)
+            vm.beginExpectedTrainingCharacter(character = 'M', startedAtMs = start + 1_000L)
+            vm.onTrainingSetTap(actual = 'M', nowMs = start + 1_700L)
+        }
+
+        vm.evaluateTrainingSetAdaptation()
+        val second = vm.evaluateTrainingSetAdaptation()
+
+        assertThat(second.type).isEqualTo(CommandType.SPEED_UP)
+        assertThat(vm.state.value.settings.effectiveWpm).isEqualTo(9)
+    }
+
+    @Test
+    fun `ai hint policy does not highlight tested letter by default`() {
+        val vm = DitDaViewModel()
+        vm.setPlaybackMode(PlaybackMode.TRAINING_SET)
+
+        assertThat(vm.shouldHighlightTrainingCharacter('K')).isFalse()
+    }
+
+    @Test
+    fun `ai hint policy highlights problem character`() {
+        val vm = DitDaViewModel()
+        vm.setPlaybackMode(PlaybackMode.TRAINING_SET)
+
+        repeat(4) { index ->
+            val start = 60_000L + (index * 2_000L)
+            vm.beginExpectedTrainingCharacter(character = 'U', startedAtMs = start)
+            vm.onTrainingSetTap(actual = if (index < 3) 'M' else 'U', nowMs = start + 1_000L)
+        }
+
+        assertThat(vm.shouldHighlightTrainingCharacter('U')).isTrue()
+        assertThat(vm.shouldHighlightTrainingCharacter('K')).isFalse()
+    }
+
+    @Test
+    fun `exposes adaptation debug line with default counters and command`() {
+        val vm = DitDaViewModel()
+
+        assertThat(vm.state.value.adaptationDebugLine).contains("stable=0")
+        assertThat(vm.state.value.adaptationDebugLine).contains("unstable=0")
+        assertThat(vm.state.value.adaptationDebugLine).contains("last=KEEP_LIST")
+    }
+
+    @Test
+    fun `updates adaptation debug line after automatic speed up`() {
+        val vm = DitDaViewModel()
+        vm.setPlaybackMode(PlaybackMode.TRAINING_SET)
+        vm.updateCharacterWpm(30)
+        vm.updateEffectiveWpm(8)
+
+        repeat(2) { iteration ->
+            val start = 20_000L + (iteration * 10_000L)
+            vm.beginExpectedTrainingCharacter(character = 'K', startedAtMs = start)
+            vm.onTrainingSetTap(actual = 'K', nowMs = start + 250L)
+            vm.beginExpectedTrainingCharacter(character = 'M', startedAtMs = start + 1_000L)
+            vm.onTrainingSetTap(actual = 'M', nowMs = start + 1_250L)
+        }
+
+        vm.evaluateTrainingSetAdaptation()
+        vm.evaluateTrainingSetAdaptation()
+
+        assertThat(vm.state.value.adaptationDebugLine).contains("last=SPEED_UP")
+    }
+
+    @Test
+    fun `resetting training set session resets adaptation debug line`() {
+        val vm = DitDaViewModel()
+        vm.setPlaybackMode(PlaybackMode.TRAINING_SET)
+        vm.updateCharacterWpm(30)
+        vm.updateEffectiveWpm(8)
+
+        repeat(2) { iteration ->
+            val start = 40_000L + (iteration * 10_000L)
+            vm.beginExpectedTrainingCharacter(character = 'K', startedAtMs = start)
+            vm.onTrainingSetTap(actual = 'K', nowMs = start + 250L)
+            vm.beginExpectedTrainingCharacter(character = 'M', startedAtMs = start + 1_000L)
+            vm.onTrainingSetTap(actual = 'M', nowMs = start + 1_250L)
+        }
+        vm.evaluateTrainingSetAdaptation()
+        vm.evaluateTrainingSetAdaptation()
+
+        vm.resetTrainingSetAdaptiveSession()
+
+        assertThat(vm.state.value.adaptationDebugLine).contains("stable=0")
+        assertThat(vm.state.value.adaptationDebugLine).contains("unstable=0")
+        assertThat(vm.state.value.adaptationDebugLine).contains("last=KEEP_LIST")
+    }
+
+    @Test
     fun `applies speed up and speed down commands within bounds`() {
         val vm = DitDaViewModel()
 

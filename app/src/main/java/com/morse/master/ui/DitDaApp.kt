@@ -525,6 +525,7 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                         highlightedCharacter = state.highlightedCharacter,
                         problemCharacters = state.problemCharacters,
                         easyCharacters = state.easyCharacters,
+                        adaptationDebugLine = state.adaptationDebugLine,
                         coachState = state.coachState,
                         sessionElapsedMs = state.sessionElapsedMs,
                         lastCoachMessage = state.lastCoachMessage,
@@ -592,15 +593,18 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                                                         viewModel.setHighlightedCharacter(null)
                                                     }
                                                 }
+                                                viewModel.clearExpectedTrainingCharacter()
+                                                val aiHighlightTarget =
+                                                    viewModel.shouldHighlightTrainingCharacter(char)
+
+                                                if (aiHighlightTarget) {
+                                                    viewModel.setHighlightedCharacter(char)
+                                                }
+                                                player.playCharacter(char, loopSettings)
                                                 viewModel.beginExpectedTrainingCharacter(
                                                     character = char,
                                                     startedAtMs = System.currentTimeMillis()
                                                 )
-
-                                                if (loopSettings.highlightPlaybackEnabled) {
-                                                    viewModel.setHighlightedCharacter(char)
-                                                }
-                                                player.playCharacter(char, loopSettings)
 
                                                 while (
                                                     isActive &&
@@ -615,11 +619,11 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                                                         val correctionSettings = loopSettings.copy(
                                                             effectiveWpm = (loopSettings.effectiveWpm - 2).coerceAtLeast(5)
                                                         )
-                                                        if (loopSettings.highlightPlaybackEnabled) {
+                                                        if (aiHighlightTarget) {
                                                             viewModel.setHighlightedCharacter(pendingCorrection)
                                                         }
                                                         player.playCharacter(pendingCorrection, correctionSettings)
-                                                        if (loopSettings.highlightPlaybackEnabled) {
+                                                        if (aiHighlightTarget) {
                                                             viewModel.setHighlightedCharacter(null)
                                                         }
                                                     } else {
@@ -636,23 +640,23 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
                                                     val correctionSettings = loopSettings.copy(
                                                         effectiveWpm = (loopSettings.effectiveWpm - 2).coerceAtLeast(5)
                                                     )
-                                                    if (loopSettings.highlightPlaybackEnabled) {
+                                                    if (aiHighlightTarget) {
                                                         viewModel.setHighlightedCharacter(correction)
                                                     }
                                                     player.playCharacter(correction, correctionSettings)
-                                                    if (loopSettings.highlightPlaybackEnabled) {
+                                                    if (aiHighlightTarget) {
                                                         viewModel.setHighlightedCharacter(null)
                                                     }
                                                 }
-                                                if (loopSettings.highlightPlaybackEnabled) {
+                                                if (aiHighlightTarget) {
                                                     viewModel.setHighlightedCharacter(null)
                                                 }
+                                                viewModel.clearExpectedTrainingCharacter()
                                                 if (viewModel.isPlaybackStopRequested()) break@playback
                                                 if (index < playSequence.lastIndex) {
                                                     delay(timing.interCharGapMs.toLong())
                                                 }
                                             }
-                                            viewModel.clearExpectedTrainingCharacter()
                                             viewModel.evaluateTrainingSetAdaptation()
 
                                             if ((totalIterations == null || repetition < totalIterations) &&

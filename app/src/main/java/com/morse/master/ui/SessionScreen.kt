@@ -168,6 +168,7 @@ fun SessionScreen(
     highlightedCharacter: Char? = null,
     problemCharacters: Set<Char> = emptySet(),
     easyCharacters: Set<Char> = emptySet(),
+    adaptationDebugLine: String? = null,
     coachState: CoachState = CoachState.IDLE,
     sessionElapsedMs: Long = 0L,
     lastCoachMessage: String? = null,
@@ -215,6 +216,9 @@ fun SessionScreen(
             Text("Practice")
             Text("Tap a letter or play the full training set.")
             Text("Speed ${settings.characterWpm}/${settings.effectiveWpm} WPM · ${settings.toneHz} Hz")
+            if (!adaptationDebugLine.isNullOrBlank()) {
+                Text(adaptationDebugLine)
+            }
             Text(
                 trainingLevelProgressText(
                     currentTrainingLevels = characters.size,
