@@ -3,7 +3,13 @@
 package com.morse.master.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import com.morse.master.MorseSessionService
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.PowerManager
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.pager.HorizontalPager
@@ -288,11 +294,7 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
         isPlaying = state.isPlaying,
         coachState = state.coachState
     )
-    val holdPartialWakeLock = shouldHoldPartialWakeLock(
-        activeTab = state.activeTab,
-        isPlaying = state.isPlaying,
-        coachState = state.coachState
-    )
+
     val powerManager = remember(context) {
         context.getSystemService(PowerManager::class.java)
     }
@@ -301,6 +303,28 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
             setReferenceCounted(false)
         }
     }
+    var isFaceDown by remember { mutableStateOf(false) }
+    val sensorManager = remember(context) {
+        context.getSystemService(SensorManager::class.java)
+    }
+    DisposableEffect(sensorManager) {
+        val gravitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GRAVITY)
+            ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                // Z-axis is negative (~-9.8) when phone is face-down
+                isFaceDown = event.values[2] < -7f
+            }
+            override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+        }
+        if (gravitySensor != null) {
+            sensorManager.registerListener(listener, gravitySensor, SensorManager.SENSOR_DELAY_UI)
+        }
+        onDispose {
+            sensorManager?.unregisterListener(listener)
+        }
+    }
+
     var micPermissionGranted by remember(context) {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -347,15 +371,15 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
     }
 
     SideEffect {
-        view.keepScreenOn = keepScreenAwake
+        view.keepScreenOn = keepScreenAwake || isFaceDown
     }
     DisposableEffect(view) {
         onDispose {
             view.keepScreenOn = false
         }
     }
-    DisposableEffect(partialWakeLock, holdPartialWakeLock) {
-        if (holdPartialWakeLock && partialWakeLock != null && !partialWakeLock.isHeld) {
+    DisposableEffect(partialWakeLock) {
+        if (partialWakeLock != null && !partialWakeLock.isHeld) {
             try {
                 partialWakeLock.acquire()
             } catch (_: SecurityException) {
@@ -366,6 +390,22 @@ fun DitDaApp(viewModel: DitDaViewModel = rememberDitDaViewModel()) {
             if (partialWakeLock != null && partialWakeLock.isHeld) {
                 partialWakeLock.release()
             }
+        }
+    }
+
+    val sessionActive = shouldHoldPartialWakeLock(
+        activeTab = state.activeTab,
+        isPlaying = state.isPlaying,
+        coachState = state.coachState
+    )
+    DisposableEffect(context, sessionActive) {
+        if (sessionActive) {
+            context.startForegroundService(Intent(context, MorseSessionService::class.java))
+        } else {
+            context.stopService(Intent(context, MorseSessionService::class.java))
+        }
+        onDispose {
+            context.stopService(Intent(context, MorseSessionService::class.java))
         }
     }
 
