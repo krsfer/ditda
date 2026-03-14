@@ -5,7 +5,17 @@
       "mcp__serena__find_symbol",
       "Bash(./deploy.sh 2>&1)",
       "Bash(./deploy.sh --skip-build 2>&1)",
-      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -30)"
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -30)",
+      "mcp__filesystem__directory_tree",
+      "mcp__filesystem__list_directory",
+      "mcp__filesystem__read_text_file",
+      "Bash(grep -r \"Sensor\\\\|accelerometer\\\\|proximity\" /Users/chris/dev/src/android/morse/app/src/main/java --include=\"*.kt\" 2>/dev/null | head -20)",
+      "Bash(ls -la /Users/chris/dev/src/android/morse/app/src/main/java/com/morse/master/*/)",
+      "Bash(./gradlew :app:compileDebugKotlin 2>&1 | tail -20)",
+      "Bash(adb devices:*)",
+      "Bash(./gradlew installDebug 2>&1 | tail -15)",
+      "Bash(./gradlew installDebug 2>&1 | tail -10)",
+      "Bash(git add:*)"
     ]
   }
 }
